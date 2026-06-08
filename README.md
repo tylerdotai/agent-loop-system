@@ -95,7 +95,7 @@ This project keeps the boundary explicit:
 
 ### Prerequisites
 
-* Python 3.11+
+* Python 3.11+; CI covers 3.11, 3.12, 3.13, and 3.14
 * `pip`
 * Optional for development: `ruff`, `pytest`
 
@@ -112,6 +112,12 @@ Install editable:
 
 ```sh
 python3 -m pip install -e .
+```
+
+Install development tools:
+
+```sh
+python3 -m pip install -e ".[dev]"
 ```
 
 Run the CLI:
@@ -360,6 +366,7 @@ Run the full local gate:
 python3 -m pytest -q
 ruff check .
 python3 -m compileall -q src examples
+python3 -m build
 ```
 
 At publication time, the project passed:
