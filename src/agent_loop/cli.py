@@ -27,6 +27,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             command_cwd=spec.get("command_cwd"),
             command_env=_load_command_env(spec),
             max_output_chars=int(spec.get("max_output_chars", 12_000)),
+            allowed_commands=_load_optional_string_list(spec, "allowed_commands"),
+            redact_values=_load_optional_string_list(spec, "redact_values"),
+            redact_patterns=_load_optional_string_list(spec, "redact_patterns"),
+            container=_load_container(spec),
         )
     except (OSError, KeyError, TypeError, ValueError, RuntimeError, TimeoutError, json.JSONDecodeError) as exc:
         print(f"invalid spec: {exc}", file=sys.stderr)
@@ -61,6 +65,23 @@ def _load_command_env(spec: dict[str, Any]) -> dict[str, str] | None:
     return command_env
 
 
+def _load_optional_string_list(spec: dict[str, Any], field_name: str) -> list[str] | None:
+    value = spec.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{field_name} must be a JSON array of strings")
+    return value
+
+
+def _load_container(spec: dict[str, Any]) -> dict[str, Any] | None:
+    value = spec.get("container")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("container must be a JSON object")
+    return value
+
+
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

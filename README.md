@@ -43,6 +43,7 @@
     <li><a href="#usage">Usage</a></li>
     <li><a href="#runtime-contract">Runtime Contract</a></li>
     <li><a href="#security-model">Security Model</a></li>
+    <li><a href="#examples">Examples</a></li>
     <li><a href="#quality-gate">Quality Gate</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contributing">Contributing</a></li>
@@ -196,6 +197,10 @@ Optional fields:
 * `command_cwd`: existing directory used as the subprocess working directory
 * `command_env`: JSON object of string environment variables merged into the subprocess environment
 * `max_output_chars`: positive integer, default `12000`; worker output and command failure messages are capped to the tail of this size
+* `allowed_commands`: JSON array of executable names or paths allowed by policy, checked before any subprocess starts
+* `redact_values`: JSON array of exact sensitive strings replaced with `[REDACTED]` in reports and command errors
+* `redact_patterns`: JSON array of regular expressions replaced with `[REDACTED]` in reports and command errors
+* `container`: optional Docker/Podman-compatible runtime config for OS-level container execution
 
 ### Worker Contract
 
@@ -249,28 +254,101 @@ Strings like `"false"`, `"no"`, or `"0"` are rejected. Eval gates need hard bool
 
 ## Security Model
 
-This harness runs local subprocesses. It uses `shell=False`, but that does not sandbox the command.
+This harness runs local subprocesses. It uses `shell=False`, validates command arrays, supports allowlisted executables, redacts configured secrets before results are reported, and can run worker/evaluator commands through a Docker/Podman-compatible container runtime.
 
-Do not run untrusted specs.
+Do not run untrusted specs without a policy. Specs are executable configuration.
 
-A spec can point at commands that read files, write files, access the network, or use the current process environment. Treat specs the same way you would treat local shell scripts.
+A spec can still point at commands that read files, write files, access the network, or use the current process environment unless you constrain it. The production pattern is:
+
+1. Set `allowed_commands` so only approved executables can start.
+2. Set `redact_values` / `redact_patterns` for sensitive output.
+3. Use `container` with `network: "none"`, `read_only: true`, and explicit read-only volumes when running third-party workers.
+4. Keep `max_iterations`, `timeout_seconds`, and `max_output_chars` bounded.
 
 Current protections:
 
 * no shell interpolation by the harness
 * command arrays are validated before execution
+* executable allowlist policy via `allowed_commands`
 * cwd/env controls are explicit
+* sensitive env values with names containing `secret`, `token`, `password`, `api_key`, or `key` are redacted automatically
+* additional exact-value and regex redaction filters are supported
 * evaluator `passed` must be a JSON boolean
 * malformed specs fail with a clean CLI error
 * subprocess output is capped
 * timeouts are enforced
+* optional OS-level isolation through Docker/Podman-style `container` execution
 
-Not included yet:
+### Allowlist Policy
 
-* OS-level sandboxing
-* container isolation
-* policy enforcement for allowed commands
-* secret redaction from worker output
+```json
+{
+  "allowed_commands": ["python3", "/usr/bin/git"]
+}
+```
+
+The policy checks the raw worker/evaluator executable before container wrapping. A command is allowed when either `command[0]` or its basename appears in `allowed_commands`.
+
+### Container Execution
+
+```json
+{
+  "container": {
+    "runtime": "docker",
+    "image": "python:3.11-slim",
+    "network": "none",
+    "read_only": true,
+    "workdir": "/workspace",
+    "volumes": [
+      {"source": ".", "target": "/workspace", "read_only": true}
+    ]
+  }
+}
+```
+
+This wraps both worker and evaluator commands as:
+
+```text
+docker run --rm -i --network none --read-only -w /workspace -v .:/workspace:ro python:3.11-slim <command...>
+```
+
+Use `runtime: "podman"` if your environment uses Podman with Docker-compatible flags.
+
+### Secret Redaction
+
+```json
+{
+  "redact_values": ["example-sensitive-value"],
+  "redact_patterns": ["gh[pousr]_[A-Za-z0-9_]+"]
+}
+```
+
+Redaction is applied to worker output, worker metadata, evaluator messages, parsed JSON strings, plain stdout, and command failure text before they enter the final report.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Examples
+
+The repository includes production-shaped examples:
+
+* `examples/quality_gate_loop.json` — runs the project test suite behind a return-code evaluator
+* `examples/allowlist_loop.json` — shows executable policy enforcement with `allowed_commands`
+* `examples/redaction_loop.json` — shows exact-value redaction before report output
+* `examples/container_loop.json` — shows Docker/Podman-style container isolation with read-only mount and no network
+
+Run the non-container examples locally:
+
+```sh
+agent-loop examples/quality_gate_loop.json
+agent-loop examples/allowlist_loop.json
+agent-loop examples/redaction_loop.json
+```
+
+Run the container example when Docker or Podman is available:
+
+```sh
+agent-loop examples/container_loop.json
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -287,7 +365,7 @@ python3 -m compileall -q src examples
 At publication time, the project passed:
 
 ```text
-13 passed
+18 passed
 All checks passed!
 ```
 
@@ -301,11 +379,11 @@ All checks passed!
 - [x] cwd/env runtime controls
 - [x] Output caps and timeout handling
 - [x] Installable CLI
-- [ ] Command allowlist policy
-- [ ] Optional containerized execution
-- [ ] Secret redaction filters
+- [x] Command allowlist policy
+- [x] Optional containerized execution
+- [x] Secret redaction filters
 - [x] GitHub Actions CI
-- [ ] More worker/evaluator examples
+- [x] More worker/evaluator examples
 
 See the [open issues](https://github.com/tylerdotai/agent-loop-system/issues) for proposed features and known issues.
 

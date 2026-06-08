@@ -1,0 +1,22 @@
+{
+  "goal": "Run the loop commands inside a container runtime",
+  "max_iterations": 1,
+  "timeout_seconds": 60,
+  "work_command": ["python3", "/workspace/examples/echo_worker.py"],
+  "eval_command": ["python3", "/workspace/examples/contains_evaluator.py"],
+  "allowed_commands": ["python3"],
+  "container": {
+    "runtime": "docker",
+    "image": "python:3.11-slim",
+    "network": "none",
+    "read_only": true,
+    "workdir": "/workspace",
+    "volumes": [
+      {"source": ".", "target": "/workspace", "read_only": true}
+    ]
+  },
+  "context": {
+    "message": "containerized worker executed",
+    "expected": "containerized"
+  }
+}

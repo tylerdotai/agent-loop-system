@@ -1,0 +1,12 @@
+{
+  "goal": "Run an allowlisted echo worker",
+  "max_iterations": 1,
+  "timeout_seconds": 30,
+  "work_command": ["python3", "examples/echo_worker.py"],
+  "eval_command": ["python3", "examples/contains_evaluator.py"],
+  "allowed_commands": ["python3"],
+  "context": {
+    "message": "allowlisted worker executed",
+    "expected": "allowlisted"
+  }
+}

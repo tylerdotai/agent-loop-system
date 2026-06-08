@@ -1,0 +1,13 @@
+{
+  "goal": "Redact sensitive worker output before it reaches the report",
+  "max_iterations": 1,
+  "timeout_seconds": 30,
+  "work_command": ["python3", "examples/echo_worker.py"],
+  "eval_command": ["python3", "examples/contains_evaluator.py"],
+  "allowed_commands": ["python3"],
+  "redact_values": ["example-sensitive-value"],
+  "context": {
+    "message": "worker output includes example-sensitive-value",
+    "expected": "[REDACTED]"
+  }
+}
