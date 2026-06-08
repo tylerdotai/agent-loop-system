@@ -1,0 +1,12 @@
+{
+  "goal": "Run the repository quality gate until it passes",
+  "max_iterations": 1,
+  "timeout_seconds": 180,
+  "work_command": ["python3", "examples/quality_gate_worker.py"],
+  "eval_command": ["python3", "examples/quality_gate_evaluator.py"],
+  "context": {
+    "command": ["python3", "-m", "pytest", "-q"],
+    "cwd": ".",
+    "command_timeout_seconds": 120
+  }
+}
