@@ -363,6 +363,7 @@ agent-loop examples/container_loop.json
 Run the full local gate:
 
 ```sh
+python3 -m pip install -e ".[dev]"
 python3 -m pytest -q
 ruff check .
 python3 -m compileall -q src examples
