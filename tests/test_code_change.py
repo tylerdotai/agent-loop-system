@@ -12,6 +12,7 @@ import pytest
 
 from agent_loop.code_change import (
     ChangeValidationError,
+    _change_prompt,
     apply_model_edits,
     capture_code_change_patch,
     create_code_change_mission,
@@ -169,6 +170,66 @@ def test_apply_model_edits_requires_planned_tracked_text_and_matching_hash(
             ],
             max_total_bytes=1_000,
         )
+
+
+def test_implementer_prompt_hashes_original_crlf_bytes(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    worktrees = tmp_path / "worktrees"
+    worktrees.mkdir()
+    prepared = prepare_code_change_worktree(repository, worktrees, "mission-1")
+    worktree = Path(prepared.worktree_root)
+    original = b"VALUE = 1\r\n"
+    (worktree / "service.py").write_bytes(original)
+
+    messages, _schema = _change_prompt(
+        "implementer",
+        "Change VALUE from 1 to 2.",
+        worktree,
+        {
+            "change_role": "planner",
+            "summary": "Change the value.",
+            "changes": [{"path": "service.py", "instruction": "Change VALUE."}],
+        },
+        b"",
+        max_prompt_chars=16_000,
+    )
+    files = json.loads(messages[1]["content"].split("Files: ", 1)[1])
+
+    assert files[0]["expected_sha256"] == hashlib.sha256(original).hexdigest()
+    assert files[0]["content"].encode("utf-8") == original
+
+
+def test_capture_patch_accepts_crlf_file_changes(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    original = b"VALUE = 1\r\n"
+    (repository / ".gitattributes").write_text("*.py -text\n", encoding="utf-8")
+    (repository / "service.py").write_bytes(original)
+    assert git(repository, "add", ".gitattributes", "service.py").returncode == 0
+    assert git(repository, "commit", "-q", "-m", "use CRLF").returncode == 0
+    worktrees = tmp_path / "worktrees"
+    worktrees.mkdir()
+    prepared = prepare_code_change_worktree(repository, worktrees, "mission-1")
+    worktree = Path(prepared.worktree_root)
+
+    apply_model_edits(
+        worktree,
+        ["service.py"],
+        [
+            {
+                "path": "service.py",
+                "expected_sha256": hashlib.sha256(original).hexdigest(),
+                "content": "VALUE = 2\r\n",
+            }
+        ],
+        max_total_bytes=1_000,
+    )
+
+    patch = capture_code_change_patch(
+        prepared,
+        ["service.py"],
+        max_patch_bytes=10_000,
+    )
+    assert b"+VALUE = 2\r\n" in patch.content
 
 
 def test_capture_patch_is_bounded_applicable_and_source_checkout_stays_unchanged(

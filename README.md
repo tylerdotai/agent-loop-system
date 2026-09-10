@@ -51,7 +51,7 @@ This project puts coordination and authority in deterministic infrastructure:
 
 ## Current status
 
-Version `0.4.0` implements a production-shaped **single-host** control plane using the Python standard library plus SQLite.
+Version `0.4.1` implements a production-shaped **single-host** control plane using the Python standard library plus SQLite.
 
 Implemented:
 
