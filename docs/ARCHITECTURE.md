@@ -4,7 +4,7 @@ Agent Loop System is a local, runner-agnostic control plane for durable multi-ag
 
 ## Status
 
-Implemented in `0.4.0`:
+Implemented in `0.4.1`:
 
 - SQLite/WAL system of record and append-only audit events
 - missions and dependency-aware task graphs

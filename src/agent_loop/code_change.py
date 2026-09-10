@@ -290,7 +290,15 @@ def capture_code_change_patch(
         raise ChangeValidationError(
             "worktree contains a change outside the approved plan"
         )
-    check = _run_git(worktree, "diff", "--check", "--", *changed_paths)
+    check = _run_git(
+        worktree,
+        "-c",
+        "core.whitespace=cr-at-eol",
+        "diff",
+        "--check",
+        "--",
+        *changed_paths,
+    )
     if check.returncode != 0:
         raise ChangeValidationError(
             _git_error(check, "patch failed Git whitespace validation")
@@ -701,13 +709,12 @@ def _change_prompt(
         assert parent is not None
         sources = []
         for path in _planned_paths(parent):
-            content = (worktree / path).read_text(encoding="utf-8")
+            source_bytes = (worktree / path).read_bytes()
+            content = source_bytes.decode("utf-8")
             sources.append(
                 {
                     "path": path,
-                    "expected_sha256": hashlib.sha256(
-                        content.encode("utf-8")
-                    ).hexdigest(),
+                    "expected_sha256": hashlib.sha256(source_bytes).hexdigest(),
                     "content": content,
                 }
             )
