@@ -12,6 +12,7 @@ from typing import Any, Sequence
 
 from .action_broker import ActionBroker, BudgetService
 from .artifacts import ArtifactStore
+from .code_change import create_code_change_mission
 from .coordinator import Coordinator
 from .message_board import MessageBoard
 from .persistence import SQLiteStore
@@ -24,7 +25,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Durable runner-agnostic multi-agent control plane."
     )
-    parser.add_argument("--db", default=".agent-loop/control.db", help="SQLite control-plane database")
+    parser.add_argument(
+        "--db", default=".agent-loop/control.db", help="SQLite control-plane database"
+    )
     parser.add_argument(
         "--artifacts",
         help="Content-addressed artifact root (default: <database-dir>/artifacts)",
@@ -33,35 +36,63 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("init", help="Initialize the control-plane database")
 
-    mission_create = commands.add_parser("mission-create", help="Create a durable mission")
+    mission_create = commands.add_parser(
+        "mission-create", help="Create a durable mission"
+    )
     mission_create.add_argument("goal")
     mission_create.add_argument("--actor", required=True)
     mission_create.add_argument("--active", action="store_true")
     mission_create.add_argument("--idempotency-key")
     mission_create.add_argument("--limits-json", default="{}")
 
+    code_change = commands.add_parser(
+        "code-change-create",
+        help="Create a planner-to-verifier code-change mission in a Git worktree",
+    )
+    code_change.add_argument("goal")
+    code_change.add_argument("--actor", required=True)
+    code_change.add_argument("--repository", required=True)
+    code_change.add_argument("--worktree-parent", required=True)
+    code_change.add_argument("--result-root", required=True)
+    code_change.add_argument("--worker-command-json", required=True)
+    code_change.add_argument("--verifier-command-json", required=True)
+    code_change.add_argument("--model-broker-socket", required=True)
+    code_change.add_argument("--model-request-json", required=True)
+    code_change.add_argument("--max-patch-bytes", type=int, default=24_000)
+    code_change.add_argument("--worker-user")
+
     mission_list = commands.add_parser("mission-list", help="List missions")
     mission_list.add_argument("--state")
 
-    mission_activate = commands.add_parser("mission-activate", help="Activate a draft mission")
+    mission_activate = commands.add_parser(
+        "mission-activate", help="Activate a draft mission"
+    )
     mission_activate.add_argument("mission_id")
     mission_activate.add_argument("--actor", required=True)
 
-    mission_pause = commands.add_parser("mission-pause", help="Pause new claims for a mission")
+    mission_pause = commands.add_parser(
+        "mission-pause", help="Pause new claims for a mission"
+    )
     mission_pause.add_argument("mission_id")
     mission_pause.add_argument("--actor", required=True)
     mission_pause.add_argument("--reason", required=True)
 
-    mission_resume = commands.add_parser("mission-resume", help="Resume a paused mission")
+    mission_resume = commands.add_parser(
+        "mission-resume", help="Resume a paused mission"
+    )
     mission_resume.add_argument("mission_id")
     mission_resume.add_argument("--actor", required=True)
 
-    mission_cancel = commands.add_parser("mission-cancel", help="Cancel all work in a mission")
+    mission_cancel = commands.add_parser(
+        "mission-cancel", help="Cancel all work in a mission"
+    )
     mission_cancel.add_argument("mission_id")
     mission_cancel.add_argument("--actor", required=True)
     mission_cancel.add_argument("--reason", required=True)
 
-    task_create = commands.add_parser("task-create", help="Create a task in an active mission")
+    task_create = commands.add_parser(
+        "task-create", help="Create a task in an active mission"
+    )
     task_create.add_argument("mission_id")
     task_create.add_argument("title")
     task_create.add_argument("--assignee", required=True)
@@ -79,7 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
     task_list.add_argument("--mission")
     task_list.add_argument("--status")
 
-    message_post = commands.add_parser("message-post", help="Append a typed board message")
+    message_post = commands.add_parser(
+        "message-post", help="Append a typed board message"
+    )
     message_post.add_argument("mission_id")
     message_post.add_argument("topic")
     message_post.add_argument("kind")
@@ -107,12 +140,16 @@ def build_parser() -> argparse.ArgumentParser:
     fact_get.add_argument("mission_id")
     fact_get.add_argument("fact_key")
 
-    capability = commands.add_parser("capability-grant", help="Grant exact action capabilities")
+    capability = commands.add_parser(
+        "capability-grant", help="Grant exact action capabilities"
+    )
     capability.add_argument("agent_id")
     capability.add_argument("capabilities", nargs="+")
     capability.add_argument("--actor", required=True)
 
-    action_propose = commands.add_parser("action-propose", help="Create a typed action request")
+    action_propose = commands.add_parser(
+        "action-propose", help="Create a typed action request"
+    )
     action_propose.add_argument("mission_id")
     action_propose.add_argument("action_type")
     action_propose.add_argument("--actor", required=True)
@@ -123,7 +160,9 @@ def build_parser() -> argparse.ArgumentParser:
     action_propose.add_argument("--task-id")
     action_propose.add_argument("--run-id")
 
-    action_approve = commands.add_parser("action-approve", help="Approve an exact action payload")
+    action_approve = commands.add_parser(
+        "action-approve", help="Approve an exact action payload"
+    )
     action_approve.add_argument("action_id")
     action_approve.add_argument("--approver", required=True)
     action_approve.add_argument("--payload-hash", required=True)
@@ -136,7 +175,9 @@ def build_parser() -> argparse.ArgumentParser:
     action_show = commands.add_parser("action-show", help="Show an action request")
     action_show.add_argument("action_id")
 
-    budget_set = commands.add_parser("budget-set", help="Set an operator-owned budget limit")
+    budget_set = commands.add_parser(
+        "budget-set", help="Set an operator-owned budget limit"
+    )
     budget_set.add_argument("scope_type")
     budget_set.add_argument("scope_id")
     budget_set.add_argument("unit")
@@ -164,7 +205,9 @@ def build_parser() -> argparse.ArgumentParser:
     worker.add_argument("--max-tasks", type=int, default=1)
     worker.add_argument("--lease-seconds", type=float, default=900)
 
-    daemon = commands.add_parser("worker-daemon", help="Run a long-lived scoped worker coordinator")
+    daemon = commands.add_parser(
+        "worker-daemon", help="Run a long-lived scoped worker coordinator"
+    )
     daemon.add_argument("--worker-id", required=True)
     daemon.add_argument("--role", action="append", required=True)
     daemon.add_argument("--allow-command", action="append", required=True)
@@ -210,21 +253,54 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return _emit(asdict(mission))
 
+        if args.command == "code-change-create":
+            created = create_code_change_mission(
+                workflow,
+                goal=args.goal,
+                actor_id=args.actor,
+                repository_root=args.repository,
+                worktree_parent=args.worktree_parent,
+                result_root=args.result_root,
+                worker_command=_load_command(
+                    args.worker_command_json, "worker-command-json"
+                ),
+                verifier_command=_load_command(
+                    args.verifier_command_json,
+                    "verifier-command-json",
+                ),
+                model_broker_socket=args.model_broker_socket,
+                model_request=_load_object(
+                    args.model_request_json, "model-request-json"
+                ),
+                max_patch_bytes=args.max_patch_bytes,
+                worker_user=args.worker_user,
+            )
+            return _emit(asdict(created))
+
         if args.command == "mission-list":
-            return _emit([asdict(mission) for mission in workflow.list_missions(state=args.state)])
+            return _emit(
+                [
+                    asdict(mission)
+                    for mission in workflow.list_missions(state=args.state)
+                ]
+            )
 
         if args.command == "mission-activate":
             return _emit(asdict(workflow.activate_mission(args.mission_id, args.actor)))
 
         if args.command == "mission-pause":
-            mission = workflow.pause_mission(args.mission_id, args.actor, reason=args.reason)
+            mission = workflow.pause_mission(
+                args.mission_id, args.actor, reason=args.reason
+            )
             return _emit(asdict(mission))
 
         if args.command == "mission-resume":
             return _emit(asdict(workflow.resume_mission(args.mission_id, args.actor)))
 
         if args.command == "mission-cancel":
-            mission = workflow.cancel_mission(args.mission_id, args.actor, reason=args.reason)
+            mission = workflow.cancel_mission(
+                args.mission_id, args.actor, reason=args.reason
+            )
             return _emit(asdict(mission))
 
         if args.command == "task-create":
@@ -287,8 +363,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "capability-grant":
             broker = ActionBroker(store, risk_policy={})
-            broker.grant_capabilities(args.agent_id, args.capabilities, actor_id=args.actor)
-            return _emit({"agent_id": args.agent_id, "capabilities": sorted(set(args.capabilities))})
+            broker.grant_capabilities(
+                args.agent_id, args.capabilities, actor_id=args.actor
+            )
+            return _emit(
+                {
+                    "agent_id": args.agent_id,
+                    "capabilities": sorted(set(args.capabilities)),
+                }
+            )
 
         if args.command == "action-propose":
             policy = _load_string_map(args.risk_policy_json, "risk-policy-json")
@@ -472,9 +555,22 @@ def _load_object(raw: str, field_name: str) -> dict[str, Any]:
     return value
 
 
+def _load_command(raw: str, field_name: str) -> list[str]:
+    value = _load_json(raw, field_name)
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item for item in value)
+    ):
+        raise ValueError(f"{field_name} must be a non-empty JSON string array")
+    return value
+
+
 def _load_string_map(raw: str, field_name: str) -> dict[str, str]:
     value = _load_object(raw, field_name)
-    if not all(isinstance(key, str) and isinstance(item, str) for key, item in value.items()):
+    if not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    ):
         raise ValueError(f"{field_name} must map strings to strings")
     return value
 

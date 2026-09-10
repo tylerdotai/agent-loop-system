@@ -31,6 +31,8 @@ Without installation, use `PYTHONPATH=src python3 -m agent_loop.<module>`.
 - `worker_cli.py`: scoped worker command surface; must never expose approval or action execution.
 - `model_broker.py`: peer UID, live run authorization, model limits, and metadata-only broker audit.
 - `repository_audit.py`: read-only model-backed audit roles with deterministic evidence IDs.
+- `code_change.py`: Git-worktree planner/implementer/reviewer/verifier missions and patch artifacts.
+- `code_change_verify.py`: deterministic final patch and source-checkout verification.
 - `engine.py` / `command_runner.py`: original feedback-loop harness.
 - `autonomy.py` / `hermes_control.py`: optional runtime adapter layer. Generic modules must not import these.
 

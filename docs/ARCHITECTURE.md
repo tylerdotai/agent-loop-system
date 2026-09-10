@@ -4,7 +4,7 @@ Agent Loop System is a local, runner-agnostic control plane for durable multi-ag
 
 ## Status
 
-Implemented in `0.3.0`:
+Implemented in `0.4.0`:
 
 - SQLite/WAL system of record and append-only audit events
 - missions and dependency-aware task graphs
@@ -19,6 +19,8 @@ Implemented in `0.3.0`:
 - a peer-credentialed Unix-socket model broker with canonical per-task limits
 - planner, specialist, synthesis, and verifier repository-audit workers
 - ACS1 compact internal packets, symbolic-source compilation, and mediator-bound simulation records
+- worktree-backed planner, implementer, reviewer, and verifier code-change missions
+- infrastructure-applied tracked-text replacements and verified patch artifacts
 - operator and worker CLIs
 
 Not implemented:
@@ -144,6 +146,8 @@ A worker does not receive:
 The broker runs under a third OS identity. Linux peer credentials admit only the worker UID. The broker validates the existing one-run token through `model.authorize`, derives model and request limits from canonical task specification, and repeats authorization after inference before releasing output. Workers keep `AF_UNIX` only; the broker alone receives loopback TCP access. Pre-parse socket admission, idle-read deadlines, and total provider deadlines bound availability. Broker audit hashes caller request IDs, accepts only validated numeric usage, and excludes prompts, responses, and tokens.
 
 Repository-audit specialists do not submit free-form citations. Each model selects an ID from a deterministic evidence catalog, and infrastructure resolves that ID to an exact repository file and source substring. Synthesis may reorder canonical findings but cannot rewrite evidence. The final verifier receives no run token and recomputes a structural digest over every non-cache path, entry type, mode, symlink target, and complete file body.
+
+Code-change missions start from a clean checkout and pin the current commit in a detached Git worktree. The planner selects existing tracked text files. The implementer returns complete file replacements bound to the current file hashes. Infrastructure writes the replacements and emits the diff; models never submit shell commands. Reviewer and verifier tasks consume canonical parent artifacts through the task DAG. The final verifier recomputes the diff and checks that the patch applies to the unchanged source checkout. Applying, committing, and pushing the patch remain separate operator actions.
 
 The Unix socket authenticates every method with the token hash and rechecks that the referenced run remains current and active.
 
