@@ -340,7 +340,7 @@ for role in planner security testing architecture synthesis verifier; do
 done
 ```
 
-Repository-audit task specifications must include `audit_role`, `repository_root`, `repository_digest`, `model_broker_socket`, and a bounded `model_request`. Give each role the `model.invoke` capability and set a mission `runs` budget equal to the admitted DAG size. The final verifier command is:
+Repository-audit task specifications must include `audit_role`, `repository_root`, `repository_digest`, `model_broker_socket`, and a bounded `model_request`. Set `"communication_protocol":"ACS1"` to enable compact durable result messages and adaptive compact model context. Give each role the `model.invoke` capability and set a mission `runs` budget equal to the admitted DAG size. The final verifier command is:
 
 ```json
 {
@@ -353,6 +353,8 @@ Repository-audit task specifications must include `audit_role`, `repository_root
 ```
 
 Specialist models select deterministic evidence IDs rather than writing citations. Infrastructure resolves each selected ID to an exact repository file and substring. The verifier receives no run token and rejects changes to any non-cache path, entry type, mode, symlink target, or file body.
+
+ACS1 uses compact path dictionaries for specialist evidence, where measured savings are material. Planner, empty synthesis, and verifier prompts retain the legacy representation when ACS1 would cost more tokens. Canonical artifacts remain expanded JSON. See `docs/ACS1.md`.
 
 ## Recovery
 

@@ -8,8 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from agent_loop.compact_protocol import encode_result_packet, parse_packet
 from agent_loop.repository_audit import (
     AuditValidationError,
+    _prior_results,
+    _prompt,
+    _encode_result_message,
     build_evidence_catalog,
     collect_repository_evidence,
     repository_digest,
@@ -199,7 +203,7 @@ def test_security_worker_calls_broker_and_publishes_verified_artifact(tmp_path: 
                     "findings": [
                         {
                             "severity": "moderate",
-                            "evidence_id": "E0001",
+                            "evidence_id": "1",
                             "finding": "The database boundary is documented.",
                             "recommendation": "Retain the boundary test.",
                         }
@@ -241,6 +245,7 @@ def test_security_worker_calls_broker_and_publishes_verified_artifact(tmp_path: 
             "audit_role": "security",
             "repository_root": str(repository),
             "model_broker_socket": str(tmp_path / "model.sock"),
+            "communication_protocol": "ACS1",
             "model_request": {
                 "model": MODEL,
                 "max_tokens": 512,
@@ -260,9 +265,85 @@ def test_security_worker_calls_broker_and_publishes_verified_artifact(tmp_path: 
     assert result["outcome"] == "candidate_complete"
     assert result["artifact_ids"] == ["artifact-1"]
     assert broker_requests[0]["run_token"] == "run-token"
+    broker_messages = broker_requests[0]["messages"]
+    assert isinstance(broker_messages, list)
+    assert isinstance(broker_messages[1], dict)
+    assert str(broker_messages[1]["content"]).startswith("ACS1|CTX\n")
     assert [method for method, _ in control_requests].count("heartbeat") == 2
     assert any(method == "message.publish" for method, _ in control_requests)
     published = next(values for method, values in control_requests if method == "message.publish")
     assert published["kind"] == "review_note"
+    assert str(published["body"]).startswith("ACS1|RES\n")
+    published_data = published["data"]
+    assert isinstance(published_data, dict)
+    assert published_data["protocol"] == "ACS1"
     assert any(method == "artifact.put" for method, _ in control_requests)
     assert (workspace / "security-result.json").is_file()
+
+
+def test_acs1_specialist_prompt_uses_path_dictionary_and_compact_evidence_ids() -> None:
+    catalog = {
+        "E0001": ("SECURITY.md", "Workers have no database access."),
+        "E0002": ("SECURITY.md", "Workers have no provider credentials."),
+    }
+
+    messages, schema, wire_catalog = _prompt(
+        "security",
+        "unused legacy evidence",
+        [],
+        catalog,
+        protocol="ACS1",
+    )
+
+    packet = parse_packet(messages[1]["content"])
+    assert packet.kind == "CTX"
+    assert messages[1]["content"].count("P|0|SECURITY.md") == 1
+    assert "E|1|0|Workers have no database access." in messages[1]["content"]
+    assert set(schema["properties"]["findings"]["items"]["properties"]["evidence_id"]["enum"]) == {
+        "1",
+        "2",
+    }
+    assert wire_catalog == {
+        "1": ("SECURITY.md", "Workers have no database access."),
+        "2": ("SECURITY.md", "Workers have no provider credentials."),
+    }
+
+
+def test_acs1_result_messages_are_readable_with_legacy_json_fallback() -> None:
+    result = {"role": "planner", "summary": "Bounded plan", "audit_areas": ["security"]}
+
+    messages = [
+        {
+            "kind": "review_note",
+            "body": json.dumps({"role": "testing", "summary": "Legacy", "findings": []}),
+        },
+        {"kind": "review_note", "body": encode_result_packet(result)},
+        {"kind": "review_note", "body": "invalid and ignored"},
+    ]
+
+    assert _prior_results(messages) == [
+        {"role": "testing", "summary": "Legacy", "findings": []},
+        result,
+    ]
+
+
+def test_oversized_valid_result_selects_json_before_any_durable_write() -> None:
+    result = {
+        "role": "security",
+        "summary": "bounded",
+        "findings": [
+            {
+                "severity": "moderate",
+                "file": f"src/{index}-" + "p" * 500,
+                "evidence": "e" * 500,
+                "finding": "f" * 1_000,
+                "recommendation": "r" * 1_000,
+            }
+            for index in range(8)
+        ],
+    }
+
+    body, protocol = _encode_result_message(result, "ACS1")
+
+    assert protocol == "JSON"
+    assert json.loads(body) == result

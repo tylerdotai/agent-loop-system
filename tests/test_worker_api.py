@@ -9,6 +9,7 @@ import pytest
 
 from agent_loop.action_broker import ActionBroker
 from agent_loop.artifacts import ArtifactStore
+from agent_loop.compact_protocol import CompactProtocolError, Packet, make_record
 from agent_loop.message_board import MessageBoard
 from agent_loop.persistence import SQLiteStore
 from agent_loop.worker_api import (
@@ -127,6 +128,59 @@ def test_worker_message_identity_and_scope_are_derived_from_token(tmp_path: Path
     assert message.mission_id == claim.task.mission_id
     assert message.task_id == claim.task.task_id
     assert listed == [message]
+
+
+def test_worker_api_validates_protocol_labeled_messages_before_persistence(tmp_path: Path) -> None:
+    _, _, _, claim, issued, api = build_worker_api(
+        tmp_path,
+        {"message.publish", "message.read"},
+    )
+    topic = f"mission.{claim.task.mission_id}.compact"
+    body = Packet(
+        "RES",
+        (make_record("Z", status="OK", result={"summary": "bounded"}),),
+    ).encode()
+
+    message = api.post_message(
+        issued.token,
+        topic=topic,
+        kind="checkpoint",
+        body=body,
+        data={"protocol": "ACS1"},
+    )
+
+    assert message.body == body
+    with pytest.raises(CompactProtocolError, match="header"):
+        api.post_message(
+            issued.token,
+            topic=topic,
+            kind="checkpoint",
+            body="ACS1 broken",
+            data={"protocol": "ACS1"},
+        )
+    with pytest.raises(CompactProtocolError, match="unsupported message protocol"):
+        api.post_message(
+            issued.token,
+            topic=topic,
+            kind="checkpoint",
+            body="opaque",
+            data={"protocol": "ACS2"},
+        )
+    with pytest.raises(CompactProtocolError, match="reserved ACS protocol prefix"):
+        api.post_message(
+            issued.token,
+            topic=topic,
+            kind="checkpoint",
+            body="ACS2|CTX\nQ|SYS|work",
+        )
+    with pytest.raises(CompactProtocolError, match="reserved ACS protocol prefix"):
+        api.post_message(
+            issued.token,
+            topic=topic,
+            kind="checkpoint",
+            body="ACS1 broken",
+        )
+    assert api.list_messages(issued.token, topic_prefix=topic) == [message]
 
 
 def test_missing_capability_expired_token_and_revoked_run_fail_closed(tmp_path: Path) -> None:

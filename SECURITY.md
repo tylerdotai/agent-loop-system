@@ -83,6 +83,8 @@ Assume the operator, control-plane process, SQLite database, risk policy, servic
 - Provider calls have a total wall-clock deadline; timed-out calls retain their concurrency slot until actual exit.
 - Broker audit records identity, timing, hashed request IDs, and validated numeric token counts; prompts, responses, caller-controlled identifiers, and run tokens are not logged.
 - Repository-audit models select deterministic evidence IDs. Infrastructure binds each ID to an exact file and substring before accepting a finding.
+- ACS1 packets are bounded data. The authenticated outer envelope remains authoritative for identity, sequence, capabilities, budgets, and idempotency; compact text cannot mutate policy or ledger state.
+- Simulation actions remain intents until a mediator validates tick, ledger version, authenticated actor, action allowlist, and structured arguments.
 
 ### Artifacts
 

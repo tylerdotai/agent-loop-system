@@ -51,7 +51,7 @@ This project puts coordination and authority in deterministic infrastructure:
 
 ## Current status
 
-Version `0.2.0` implements a production-shaped **single-host** control plane using the Python standard library plus SQLite.
+Version `0.3.0` implements a production-shaped **single-host** control plane using the Python standard library plus SQLite.
 
 Implemented:
 
@@ -76,6 +76,7 @@ Implemented:
 - capability-scoped Unix socket worker API
 - loopback-only local-model broker with peer-UID and live run-token authorization
 - read-only multi-agent repository audit with deterministic evidence IDs
+- ACS1 compact agent serialization with strict simulation intent, observation, ToM, and metric validation
 - operator and worker CLIs
 - privilege-separated, no-network system-service template
 
@@ -87,7 +88,7 @@ Deliberately not bundled:
 - multi-host consensus
 - a claim of exactly-once external execution
 
-See [Architecture](docs/ARCHITECTURE.md), [Operations](docs/OPERATIONS.md), and [Security](SECURITY.md).
+See [Architecture](docs/ARCHITECTURE.md), [Operations](docs/OPERATIONS.md), [ACS1](docs/ACS1.md), and [Security](SECURITY.md).
 
 ## Requirements
 

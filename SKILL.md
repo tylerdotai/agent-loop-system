@@ -63,6 +63,7 @@ python3 -m build
 - `worker_cli.py`: scoped worker commands.
 - `model_broker.py`: worker peer identity, live token reauthorization, model limits, and metadata-only audit.
 - `repository_audit.py`: model-backed audit roles with deterministic evidence-ID binding.
+- `compact_protocol.py`: ACS1 canonical encoding, source aliases, result handoffs, and mediator-bound simulation validation.
 
 ## Test map
 
@@ -75,6 +76,7 @@ python3 -m build
 - Adversarial boundaries: `tests/test_control_plane_adversarial.py`
 - Package surface: `tests/test_public_api.py`
 - Model broker and audit: `tests/test_model_broker.py`, `tests/test_repository_audit.py`
+- Compact protocol: `tests/test_compact_protocol.py`
 
 New behavior requires a failing boundary test first. After targeted green, run the complete gate, a clean-install CLI smoke test, and a real enabled-service canary before calling deployment complete.
 

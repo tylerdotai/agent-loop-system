@@ -9,6 +9,16 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
+from .compact_protocol import (
+    CompactProtocolError,
+    Packet,
+    compact_mapping,
+    decode_result_packet,
+    encode_evidence_packet,
+    encode_result_packet,
+    make_record,
+    parse_packet,
+)
 from .model_broker import broker_call
 from .worker_api import control_call
 
@@ -318,6 +328,9 @@ def run_audit(
     if not isinstance(model_request, dict):
         raise AuditValidationError("model_request must be an object")
     model = _text(model_request.get("model"), "model")
+    protocol = specification.get("communication_protocol", "JSON")
+    if protocol not in {"JSON", "ACS1"}:
+        raise AuditValidationError("communication_protocol must be JSON or ACS1")
     max_tokens = _positive_integer(model_request.get("max_tokens"), "max_tokens")
     max_prompt_chars = _positive_integer(model_request.get("max_prompt_chars"), "max_prompt_chars")
     control_socket = _text(control_values.get("socket_path"), "control socket")
@@ -347,7 +360,18 @@ def run_audit(
             role,
             max_chars=evidence_budget,
         )
-    messages, schema = _prompt(role, repository_evidence, prior_results, evidence_catalog)
+    try:
+        messages, schema, evidence_catalog = _prompt(
+            role,
+            repository_evidence,
+            prior_results,
+            evidence_catalog,
+            protocol=protocol,
+        )
+    except CompactProtocolError as exc:
+        raise AuditValidationError(f"compact protocol construction failed: {exc}") from exc
+    if sum(len(message["content"]) for message in messages) > max_prompt_chars:
+        raise AuditValidationError("final rendered model prompt exceeds task limit")
     response = broker(
         broker_socket,
         {
@@ -384,6 +408,7 @@ def run_audit(
             "provider_usage": response.get("usage", {}),
         }
     )
+    message_body, message_protocol = _encode_result_message(result, protocol)
     encoded = json.dumps(result, indent=2, sort_keys=True).encode("utf-8")
     artifact_path = workspace / f"{role}-result.json"
     artifact_path.write_bytes(encoded)
@@ -408,8 +433,12 @@ def run_audit(
         {
             "topic": f"mission.{mission_id}.audit.{role}",
             "kind": "review_note",
-            "body": json.dumps(result, separators=(",", ":")),
-            "data": {"artifact_id": artifact["artifact_id"], "role": role},
+            "body": message_body,
+            "data": {
+                "artifact_id": artifact["artifact_id"],
+                "role": role,
+                "protocol": message_protocol,
+            },
             "artifact_refs": [artifact["artifact_id"]],
             "dedupe_key": f"{run_id}:{role}:message",
         },
@@ -432,12 +461,34 @@ def run_audit(
     }
 
 
+def _encode_result_message(result: dict[str, Any], protocol: str) -> tuple[str, str]:
+    legacy = json.dumps(result, separators=(",", ":"))
+    if len(legacy) > 64_000:
+        raise AuditValidationError("canonical result exceeds durable message limit")
+    if protocol == "JSON":
+        return legacy, "JSON"
+    if protocol != "ACS1":
+        raise AuditValidationError("unsupported communication protocol")
+    try:
+        return encode_result_packet(result), "ACS1"
+    except CompactProtocolError as exc:
+        if str(exc) != "packet exceeds maximum size":
+            raise
+        return legacy, "JSON"
+
+
 def _prompt(
     role: str,
     repository_evidence: str,
     prior_results: list[dict[str, Any]],
     evidence_catalog: dict[str, tuple[str, str]],
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    *,
+    protocol: str = "JSON",
+) -> tuple[list[dict[str, str]], dict[str, Any], dict[str, tuple[str, str]]]:
+    if protocol == "ACS1":
+        return _compact_prompt(role, repository_evidence, prior_results, evidence_catalog)
+    if protocol != "JSON":
+        raise AuditValidationError("unsupported communication protocol")
     base = (
         "You are one worker in a governed read-only repository audit. Return only JSON matching "
         "the schema. Never claim a file fact without exact quoted evidence. Do not propose external actions."
@@ -447,7 +498,11 @@ def _prompt(
             "Select no more than six bounded audit areas. Keep the summary under 1,000 characters and "
             f"each area under 500 characters.\n{repository_evidence}"
         )
-        return [{"role": "system", "content": base}, {"role": "user", "content": user}], _planner_schema()
+        return (
+            [{"role": "system", "content": base}, {"role": "user", "content": user}],
+            _planner_schema(),
+            evidence_catalog,
+        )
     if role in _SPECIALISTS:
         user = (
             f"Perform the {role} audit. For every finding, select one evidence_id from the supplied "
@@ -457,6 +512,7 @@ def _prompt(
         return (
             [{"role": "system", "content": base}, {"role": "user", "content": user}],
             _findings_schema(tuple(evidence_catalog)),
+            evidence_catalog,
         )
     if role == "synthesis":
         findings = _canonical_findings(prior_results)
@@ -465,7 +521,11 @@ def _prompt(
             "into the supplied canonical list; do not create or rewrite findings.\n"
             f"Canonical findings: {_bounded_json(findings, 12_000)}"
         )
-        return [{"role": "system", "content": base}, {"role": "user", "content": user}], _synthesis_schema(len(findings))
+        return (
+            [{"role": "system", "content": base}, {"role": "user", "content": user}],
+            _synthesis_schema(len(findings)),
+            evidence_catalog,
+        )
     reports = [result for result in prior_results if result.get("role") == "synthesis"]
     if not reports:
         raise AuditValidationError("verifier requires a synthesis result")
@@ -474,7 +534,75 @@ def _prompt(
         "passed deterministic validation and the report contains no unsupported additions.\n"
         f"Report: {_bounded_json(reports[-1], 12_000)}"
     )
-    return [{"role": "system", "content": base}, {"role": "user", "content": user}], _verifier_schema()
+    return (
+        [{"role": "system", "content": base}, {"role": "user", "content": user}],
+        _verifier_schema(),
+        evidence_catalog,
+    )
+
+
+def _compact_prompt(
+    role: str,
+    repository_evidence: str,
+    prior_results: list[dict[str, Any]],
+    evidence_catalog: dict[str, tuple[str, str]],
+) -> tuple[list[dict[str, str]], dict[str, Any], dict[str, tuple[str, str]]]:
+    if role == "planner":
+        return _prompt(
+            role,
+            repository_evidence,
+            prior_results,
+            evidence_catalog,
+            protocol="JSON",
+        )
+    if role in _SPECIALISTS:
+        base = (
+            "Read-only audit. ACS1: Q task; P path; E evidence-id/path-id/exact text. "
+            "Return schema JSON. Cite supplied E IDs only. No actions."
+        )
+        packet, wire_catalog = encode_evidence_packet(
+            evidence_catalog,
+            domain="AUD",
+            query=f"{role} audit; zero findings allowed; cite E IDs only",
+        )
+        return (
+            [{"role": "system", "content": base}, {"role": "user", "content": packet}],
+            _findings_schema(tuple(wire_catalog)),
+            wire_catalog,
+        )
+    if role == "synthesis":
+        findings = _canonical_findings(prior_results)
+        if not findings:
+            return _prompt(
+                role,
+                repository_evidence,
+                prior_results,
+                evidence_catalog,
+                protocol="JSON",
+            )
+        base = (
+            "Read-only audit. ACS1 C aliases: v severity,p file,e evidence,d finding,x "
+            "recommendation. Return schema JSON. Reorder only; add nothing."
+        )
+        packet = Packet(
+            "CTX",
+            (
+                make_record("Q", domain="AUD", query="summarize; order canonical findings only"),
+                make_record("C", name="findings", value=compact_mapping(findings)),
+            ),
+        ).encode()
+        return (
+            [{"role": "system", "content": base}, {"role": "user", "content": packet}],
+            _synthesis_schema(len(findings)),
+            evidence_catalog,
+        )
+    return _prompt(
+        role,
+        repository_evidence,
+        prior_results,
+        evidence_catalog,
+        protocol="JSON",
+    )
 
 
 def _finalize_role_result(
@@ -537,8 +665,12 @@ def _prior_results(messages: list[Any]) -> list[dict[str, Any]]:
         if not isinstance(body, str) or len(body) > 64_000:
             continue
         try:
-            value = json.loads(body)
-        except json.JSONDecodeError:
+            value = (
+                decode_result_packet(parse_packet(body))
+                if body.startswith("ACS1|")
+                else json.loads(body)
+            )
+        except (json.JSONDecodeError, CompactProtocolError):
             continue
         if isinstance(value, dict):
             results.append(value)

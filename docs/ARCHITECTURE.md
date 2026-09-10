@@ -4,7 +4,7 @@ Agent Loop System is a local, runner-agnostic control plane for durable multi-ag
 
 ## Status
 
-Implemented in `0.2.0`:
+Implemented in `0.3.0`:
 
 - SQLite/WAL system of record and append-only audit events
 - missions and dependency-aware task graphs
@@ -18,6 +18,7 @@ Implemented in `0.2.0`:
 - one-run worker tokens and a capability-scoped Unix socket API
 - a peer-credentialed Unix-socket model broker with canonical per-task limits
 - planner, specialist, synthesis, and verifier repository-audit workers
+- ACS1 compact internal packets, symbolic-source compilation, and mediator-bound simulation records
 - operator and worker CLIs
 
 Not implemented:

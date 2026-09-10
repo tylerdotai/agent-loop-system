@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import socket
 import socketserver
@@ -16,6 +17,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .action_broker import ActionBroker, ActionRequest
 from .artifacts import Artifact, ArtifactStore
+from .compact_protocol import CompactProtocolError, parse_packet
 from .message_board import Fact, Message, MessageBoard, Subscription
 from .persistence import SQLiteStore
 from .workflow import Task, WorkflowService
@@ -332,6 +334,20 @@ class WorkerAPI:
                 "dedupe_key": dedupe_key,
             },
         )
+        protocol = data.get("protocol") if isinstance(data, dict) else None
+        reserved_acs_prefix = re.match(r"^ACS[0-9]+(?:\||\s|$)", body) is not None
+        if protocol == "ACS1":
+            parse_packet(body)
+        elif protocol == "JSON":
+            if reserved_acs_prefix:
+                raise CompactProtocolError("ACS body conflicts with JSON message protocol")
+        elif protocol is None:
+            if body.startswith("ACS1|"):
+                parse_packet(body)
+            elif reserved_acs_prefix:
+                raise CompactProtocolError("reserved ACS protocol prefix is malformed or unknown")
+        else:
+            raise CompactProtocolError("unsupported message protocol")
         return self.board.publish(
             principal.mission_id,
             topic,
