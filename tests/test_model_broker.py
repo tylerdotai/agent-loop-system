@@ -56,7 +56,9 @@ def request() -> dict[str, object]:
     }
 
 
-def test_broker_enforces_run_authorization_limits_and_redacted_audit(tmp_path: Path) -> None:
+def test_broker_enforces_run_authorization_limits_and_redacted_audit(
+    tmp_path: Path,
+) -> None:
     authorizations: list[tuple[str, str]] = []
     provider_calls: list[dict[str, object]] = []
 
@@ -116,7 +118,9 @@ def test_broker_enforces_run_authorization_limits_and_redacted_audit(tmp_path: P
     [
         (lambda value: value.update(max_tokens=513), "token limit"),
         (
-            lambda value: value.update(messages=[{"role": "user", "content": "x" * 2_001}]),
+            lambda value: value.update(
+                messages=[{"role": "user", "content": "x" * 2_001}]
+            ),
             "prompt limit",
         ),
     ],
@@ -144,7 +148,9 @@ def test_broker_rejects_task_policy_limit_violations(
         broker.complete(payload, peer_uid=os.getuid())
 
 
-def test_broker_rejects_wrong_peer_uid_before_token_or_provider_use(tmp_path: Path) -> None:
+def test_broker_rejects_wrong_peer_uid_before_token_or_provider_use(
+    tmp_path: Path,
+) -> None:
     broker = ModelBroker(
         ModelBrokerPolicy(
             model=MODEL,
@@ -161,7 +167,9 @@ def test_broker_rejects_wrong_peer_uid_before_token_or_provider_use(tmp_path: Pa
         broker.complete(request(), peer_uid=os.getuid() + 1)
 
 
-def test_broker_discards_provider_result_when_run_is_cancelled_mid_request(tmp_path: Path) -> None:
+def test_broker_discards_provider_result_when_run_is_cancelled_mid_request(
+    tmp_path: Path,
+) -> None:
     calls = 0
 
     def authorize(_socket: str, _token: str) -> dict[str, object]:
@@ -228,7 +236,9 @@ def test_broker_enforces_total_provider_deadline_without_releasing_live_slot(
     assert calls == 1
 
 
-def test_broker_hashes_request_id_and_rejects_tainted_usage_metadata(tmp_path: Path) -> None:
+def test_broker_hashes_request_id_and_rejects_tainted_usage_metadata(
+    tmp_path: Path,
+) -> None:
     payload = request()
     payload["request_id"] = TOKEN
     audit_log = tmp_path / "audit.jsonl"
@@ -305,7 +315,12 @@ def test_socket_server_bounds_idle_connections_and_recovers(tmp_path: Path) -> N
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as excess:
                 excess.settimeout(0.5)
                 excess.connect(str(socket_path))
-                excess.sendall(b"{}\n")
+                try:
+                    excess.sendall(b"{}\n")
+                except BrokenPipeError:
+                    # Busy admission may send its response and close before the
+                    # client wins the race to write a request body.
+                    pass
                 busy = json.loads(excess.recv(4096))
             assert busy["error"]["message"] == "model broker is busy"
 

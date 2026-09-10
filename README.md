@@ -51,7 +51,7 @@ This project puts coordination and authority in deterministic infrastructure:
 
 ## Current status
 
-Version `0.3.0` implements a production-shaped **single-host** control plane using the Python standard library plus SQLite.
+Version `0.4.0` implements a production-shaped **single-host** control plane using the Python standard library plus SQLite.
 
 Implemented:
 
@@ -77,6 +77,8 @@ Implemented:
 - loopback-only local-model broker with peer-UID and live run-token authorization
 - read-only multi-agent repository audit with deterministic evidence IDs
 - ACS1 compact agent serialization with strict simulation intent, observation, ToM, and metric validation
+- planner → implementer → reviewer → verifier code-change missions in isolated Git worktrees
+- bounded tracked-text replacements with verified unified-diff patch artifacts
 - operator and worker CLIs
 - privilege-separated, no-network system-service template
 
@@ -209,6 +211,38 @@ Inspect durable state:
 ```
 
 The canary crosses real boundaries: subprocess stdin/stdout, run token, Unix socket, heartbeat, typed message, artifact upload, artifact hash verification, completion gate, token revocation, and socket cleanup.
+
+## Code-change missions
+
+`code-change-create` turns a clean local Git checkout into a four-task mission:
+
+```text
+planner → implementer → reviewer → verifier → verified .patch artifact
+```
+
+The operator supplies the repository, worktree parent, result directory, worker command, verifier command, model-broker socket, and model limits. The command pins the current commit, creates a detached worktree, and writes the task DAG to the existing control-plane database.
+
+```sh
+PYTHON="$PWD/.venv/bin/python"
+mkdir -p "$PWD/.agent-loop/change-worktrees" "$PWD/.agent-loop/change-results"
+
+agent-loop-control --db "$DB" code-change-create \
+  "Change the greeting to return Howdy." \
+  --actor operator \
+  --repository /path/to/clean/repository \
+  --worktree-parent "$PWD/.agent-loop/change-worktrees" \
+  --result-root "$PWD/.agent-loop/change-results" \
+  --worker-command-json "[\"$PYTHON\",\"-I\",\"-m\",\"agent_loop.code_change\"]" \
+  --verifier-command-json "[\"$PYTHON\",\"-I\",\"-m\",\"agent_loop.code_change_verify\"]" \
+  --model-broker-socket /run/agent-loop-model/broker.sock \
+  --model-request-json '{"model":"local-model","max_tokens":2048,"max_prompt_chars":24000,"temperature":0}'
+```
+
+The `model` value must exactly match the model configured on the selected broker. Privilege-separated deployments should also pass `--worker-user agent-loop-worker` from a control process with permission to hand the worktree to that account; same-user local runs can omit it.
+
+Run workers with the four admitted roles and the `run.heartbeat`, `message.publish`, `artifact.read`, `artifact.write`, and `model.invoke` capabilities. The first writable contract intentionally supports modifications to existing tracked UTF-8 files only. New files, deletes, renames, commits, and pushes remain operator work.
+
+The final verifier recomputes the worktree diff, confirms the patch still matches the reviewed artifact, checks that the patch applies to the clean source checkout, and records the verified patch under the configured result root.
 
 ## Operator controls
 
@@ -411,6 +445,8 @@ src/agent_loop/
 ├── runner_adapter.py    # bounded JSON subprocess contract
 ├── coordinator.py       # claim → run → validate → complete
 ├── worker_api.py        # run tokens and Unix socket API
+├── code_change.py       # worktree-backed planner/implementer/reviewer/verifier loop
+├── code_change_verify.py # deterministic final patch verification
 ├── control_cli.py       # operator/supervisor command surface
 ├── worker_cli.py        # scoped agent command surface
 ├── engine.py            # original pure feedback loop
