@@ -23,3 +23,14 @@ ENV/
 .DS_Store
 .idea/
 .vscode/
+
+# Local control-plane state and agent planning artifacts
+.agent-loop/
+.omo/
+var/
+*.db
+*.db-shm
+*.db-wal
+*.sock
+config/autonomy-policy.json
+!config/*.example.json

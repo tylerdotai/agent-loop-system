@@ -1,31 +1,97 @@
 # Agent Loop System
 
 ## Setup and gates
-- Install dev tools with `python3 -m pip install -e ".[dev]"`; there is no lockfile or alternate package manager here.
-- CI runs on Python 3.11-3.14 and uses this gate order: `python -m pytest -q`, `ruff check .`, `python -m compileall -q src examples`, `python -m build`.
-- Pytest is configured in `pyproject.toml` with `pythonpath = ["src"]`, so focused tests work as `python3 -m pytest tests/test_cli.py -q` or `python3 -m pytest tests/test_security_controls.py::test_allowed_commands_blocks_unapproved_worker_before_execution -q`.
 
-## Running the surface
-- Installed CLI entrypoint: `agent-loop examples/quality_gate_loop.json`; without install use `PYTHONPATH=src python3 -m agent_loop.cli examples/quality_gate_loop.json`.
-- `examples/quality_gate_loop.json` only runs `python3 -m pytest -q` through its worker context; it is not the full CI gate.
-- `examples/container_loop.json` needs Docker/Podman. The other public loop specs run locally with Python only.
+- Install dev tools with `python3 -m pip install -e ".[dev]"`; there is no lockfile or alternate package manager.
+- Canonical gate: `python -m pytest -q`, `ruff check .`, `python -m compileall -q src examples tests`, `python -m build`.
+- CI targets Python 3.11-3.14.
+- Use focused tests during TDD, then run the full gate.
+
+## Public commands
+
+- `agent-loop`: original bounded worker/evaluator feedback loop.
+- `agent-loop-control`: operator and supervisor control-plane CLI.
+- `agent-loop-worker`: capability-scoped worker client for the Unix socket API.
+- `agent-autonomy`: optional runner-specific autonomy adapter; not part of the generic core.
+
+Without installation, use `PYTHONPATH=src python3 -m agent_loop.<module>`.
 
 ## Architecture map
-- `src/agent_loop/cli.py` loads a JSON spec, calls `run_command_loop`, prints a dataclass report as JSON, and returns `0` on success, `1` on evaluator failure, `2` on invalid specs/runtime errors.
-- `src/agent_loop/command_runner.py` owns subprocess execution, spec validation, cwd/env/container handling, redaction, timeout/output caps, and adapts commands into `LoopEngine` callbacks.
-- `src/agent_loop/engine.py` is the pure loop: it builds state with `goal`, `attempt`, `max_iterations`, `context`, `previous_feedback`, and `history`, then stops on evaluator pass or `max_iterations`.
-- `src/agent_loop/__init__.py` exports only the engine dataclasses/classes; import `run_command_loop` from `agent_loop.command_runner`.
 
-## Runtime contracts to preserve
-- `work_command` and `eval_command` must be non-empty lists of strings; never change this to shell strings or `shell=True`.
-- Workers read state JSON from stdin and should return `{"output": ..., "metadata": {...}}`; plain text worker stdout is accepted, but metadata must be an object when present.
-- Evaluators read `{"state": ..., "result": ...}` from stdin and must return a JSON object with a real boolean `passed`; string booleans like `"false"` are intentionally rejected.
-- `allowed_commands` checks the raw worker/evaluator executable before container wrapping and accepts either the exact executable or its basename.
-- `command_env` is merged into `os.environ`, not isolated. Env values whose keys contain `secret`, `token`, `password`, `passwd`, `api_key`, `apikey`, or `key` are auto-redacted in reports.
-- `max_output_chars` keeps the tail of worker output and command failure text; tests assert tail preservation.
-- `command_timeout_seconds` appears only inside `examples/quality_gate_loop.json` `context`; the top-level harness timeout field is `timeout_seconds`.
+- `persistence.py`: SQLite/WAL connections, owner-only database files, transactions, append-only events.
+- `workflow.py`: missions, dependency DAGs, tasks, claims, leases, heartbeats, resource locks, retries, lifecycle, and recovery.
+- `message_board.py`: typed messages, durable subscription cursors, deduplication, and versioned owner-scoped facts.
+- `artifacts.py`: content-addressed immutable blobs, provenance, permissions, and integrity checks.
+- `action_broker.py`: exact capability grants, R0-R4 policy, payload-bound approvals, handler receipts, unknown-outcome recovery, and budgets.
+- `runner_adapter.py`: strict JSON subprocess contract, allowlists, workspace roots, per-run cgroups, timeout, cancellation, output cap, privilege drop, and run-token redaction.
+- `coordinator.py`: recover → claim → issue scoped token → run → validate evidence/artifacts → complete/fail → revoke token.
+- `worker_api.py`: run-token hashes and capability-scoped Unix socket methods.
+- `control_cli.py`: operator/supervisor command surface.
+- `worker_cli.py`: scoped worker command surface; must never expose approval or action execution.
+- `engine.py` / `command_runner.py`: original feedback-loop harness.
+- `autonomy.py` / `hermes_control.py`: optional runtime adapter layer. Generic modules must not import these.
 
-## Tests and examples
-- Tests create temporary worker/evaluator scripts and run real subprocesses; keep contract tests in `tests/test_production_contracts.py`, runtime tests in `tests/test_runtime_controls.py`, and security/redaction/container policy tests in `tests/test_security_controls.py` aligned with behavior changes.
-- The container unit test fakes the container runtime with a temporary script, so it does not require Docker; only the public `examples/container_loop.json` does.
-- `tests/test_security_controls.py::test_examples_include_multiple_public_loop_specs` expects the public `*_loop.json` specs for quality gate, allowlist, redaction, and container examples to remain present.
+## Core invariants
+
+- The database is canonical; transcripts are not state.
+- Workers never receive direct database, policy, approval, receipt, audit-write, or shutdown access.
+- Claims, resource leases, fact CAS updates, action transitions, and budget reservations serialize through `BEGIN IMMEDIATE`.
+- Run IDs are fencing tokens. Stale workers cannot heartbeat or complete.
+- Delivery is at least once. Stable idempotency keys are required at redelivery boundaries.
+- Shared facts use owner checks and versions. Disagreement uses typed messages.
+- Artifact IDs count as evidence only after existence, hash, size, mission, and task checks.
+- Approval binds the canonical action payload hash.
+- Ambiguous external outcomes become `unknown` and are never retried automatically.
+- Production cancellation must terminate the entire per-run cgroup; the process-tree fallback is defense in depth only.
+- No model/provider/runtime belongs in durable state services.
+
+## Runtime contracts
+
+### Multi-agent worker
+
+- Reads one `RunRequest` JSON object from stdin.
+- Receives mission/task/run identity, structured context, workspace, limits, and scoped control values.
+- Returns one strict JSON object with `outcome`, `summary`, `artifact_ids`, `evidence`, `fact_proposals`, `residual_risks`, and `requested_followups`.
+- Valid outcomes: `candidate_complete`, `blocked`, `failed`.
+- The runner uses `shell=False`; commands are non-empty string arrays.
+- Operator allowlists constrain executable and resolved cwd.
+- Dynamic run tokens, common encodings, and long fragments must be redacted before worker output is parsed or persisted.
+
+### Scoped worker API
+
+- Every call carries the one-run token.
+- Identity and scope derive from the token, never caller fields.
+- Authorization rechecks current task/run state.
+- Methods: context, heartbeat, message publish/list, subscription create/read/ack, fact get/put, artifact put/read, action propose.
+- No approval, execution, policy mutation, audit write, or shutdown methods.
+
+### Original feedback loop
+
+- Workers read state JSON from stdin and return `{"output": ..., "metadata": {...}}` or plain text.
+- Evaluators receive state/result JSON and must return a real boolean `passed`.
+- Preserve allowlist, cwd/env, container, timeout, output cap, and redaction behavior.
+
+## Tests
+
+- Real boundaries are mandatory: SQLite files, multiprocessing races, subprocesses, process groups, Unix sockets, artifact files, and CLI parsing.
+- `test_workflow_control_plane.py`: mission/task state machines, DAGs, leases, recovery, resource conflicts.
+- `test_message_board.py`: typed board, cursors, dedupe, facts.
+- `test_action_broker.py`: capabilities, approvals, receipts, budgets.
+- `test_runner_adapter.py`: process protocol, timeout/cancel, coordinator, scoped token integration.
+- `test_worker_api.py` / `test_worker_cli.py`: authorization and real socket calls.
+- `test_control_plane_adversarial.py`: cross-scope, secret, symlink, workspace, and permission failures.
+- `test_control_cli.py`: real operator and daemon flows.
+- `test_public_api.py`: package boundary and entrypoints.
+
+## Local state
+
+- `.agent-loop/`, `.omo/`, `var/`, database/WAL/SHM files, sockets, and `config/autonomy-policy.json` are local-only and ignored.
+- Public policy examples use `*.example.json`.
+- Never commit credentials, generated registries, task databases, artifacts, or private paths.
+
+## Documentation
+
+- `README.md`: public overview and quick start.
+- `docs/ARCHITECTURE.md`: component, protocol, state, trust, and recovery design.
+- `docs/OPERATIONS.md`: installation, canary, service, backup, and operator runbook.
+- `SECURITY.md`: threat model, enforced controls, deployment requirements, and limits.

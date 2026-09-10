@@ -1,0 +1,71 @@
+[Unit]
+Description=Agent Loop privilege-separated worker %i
+After=local-fs.target
+ConditionFileIsExecutable=/opt/agent-loop-system/.venv/bin/agent-loop-control
+ConditionFileIsExecutable=/opt/agent-loop-system/.venv/bin/python
+ConditionPathIsDirectory=/var/lib/agent-loop-workspaces
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=agent-loop-control
+Group=agent-loop-control
+WorkingDirectory=/opt/agent-loop-system
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+StateDirectory=agent-loop
+StateDirectoryMode=0700
+RuntimeDirectory=agent-loop
+RuntimeDirectoryMode=0711
+ExecStart=/opt/agent-loop-system/.venv/bin/agent-loop-control \
+  --db /var/lib/agent-loop/control.db \
+  --artifacts /var/lib/agent-loop/artifacts \
+  worker-daemon \
+  --worker-id %i \
+  --role worker \
+  --allow-command /opt/agent-loop-system/.venv/bin/python \
+  --workspace-root /var/lib/agent-loop-workspaces \
+  --worker-user agent-loop-worker \
+  --require-cgroup \
+  --capability context.read \
+  --capability run.heartbeat \
+  --capability message.publish \
+  --capability message.read \
+  --capability subscription.create \
+  --capability subscription.read \
+  --capability subscription.ack \
+  --capability fact.read \
+  --capability fact.write \
+  --capability artifact.read \
+  --capability artifact.write \
+  --capability action.propose \
+  --socket /run/agent-loop/%i.sock \
+  --risk-policy-file /etc/agent-loop/control-risk-policy.json
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillMode=control-group
+NoNewPrivileges=true
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SETPCAP
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SETPCAP
+Delegate=yes
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/opt/agent-loop-system /etc/agent-loop
+ReadWritePaths=/var/lib/agent-loop /var/lib/agent-loop-workspaces /run/agent-loop
+MemoryMax=4G
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

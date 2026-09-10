@@ -1,442 +1,443 @@
 <a id="readme-top"></a>
 
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
 [![MIT License][license-shield]][license-url]
 [![Python][python-shield]][python-url]
 
-<br />
 <div align="center">
-  <h1 align="center">Agent Loop System</h1>
-
-  <p align="center">
-    A production-oriented closed-loop agent harness for running real workers behind strict evaluator gates.
-    <br />
-    <a href="https://github.com/tylerdotai/agent-loop-system"><strong>Explore the source »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/tylerdotai/agent-loop-system/issues/new?labels=bug">Report Bug</a>
-    &middot;
-    <a href="https://github.com/tylerdotai/agent-loop-system/issues/new?labels=enhancement">Request Feature</a>
-  </p>
+  <h1>Agent Loop System</h1>
+  <p>Durable local multi-agent coordination with bounded runners, explicit policy, and operator control.</p>
 </div>
 
-<details>
-  <summary>Table of Contents</summary>
-  <ol>
-    <li>
-      <a href="#about-the-project">About The Project</a>
-      <ul>
-        <li><a href="#built-with">Built With</a></li>
-        <li><a href="#why-this-exists">Why This Exists</a></li>
-      </ul>
-    </li>
-    <li>
-      <a href="#getting-started">Getting Started</a>
-      <ul>
-        <li><a href="#prerequisites">Prerequisites</a></li>
-        <li><a href="#installation">Installation</a></li>
-      </ul>
-    </li>
-    <li><a href="#usage">Usage</a></li>
-    <li><a href="#runtime-contract">Runtime Contract</a></li>
-    <li><a href="#security-model">Security Model</a></li>
-    <li><a href="#examples">Examples</a></li>
-    <li><a href="#quality-gate">Quality Gate</a></li>
-    <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#contributing">Contributing</a></li>
-    <li><a href="#license">License</a></li>
-    <li><a href="#contact">Contact</a></li>
-  </ol>
-</details>
+## What it is
 
-## About The Project
+Agent Loop System provides two related execution layers:
 
-Agent Loop System turns “looping” into a bounded control system:
+1. **Closed-loop harness** — `goal → worker → evaluator → feedback → retry → stop`.
+2. **Multi-agent control plane** — durable missions, task DAGs, typed messages, leases, artifacts, action approvals, budgets, and crash recovery.
+
+The control plane is intentionally runner-agnostic. Scripts, coding-agent CLIs, local models, hosted models, containers, and remote executors can implement the same JSON worker contract. No model provider or agent framework owns canonical state.
+
+```text
+operator
+   │
+   ▼
+mission → task DAG → atomic claim → bounded worker → verified completion
+                 │              │
+                 │              ├── scoped message board
+                 │              ├── versioned facts
+                 │              ├── immutable artifacts
+                 │              └── governed action proposals
+                 ▼
+          leases + audit events + recovery
+```
+
+## Why it exists
+
+Multi-agent systems fail when transcripts become databases, shared folders become command channels, or models receive broad host authority because prompts say “be careful.”
+
+This project puts coordination and authority in deterministic infrastructure:
+
+- SQLite/WAL is the system of record.
+- Workers are disposable processes.
+- Messages are typed, attributed, scoped, and deduplicated.
+- Task claims and resource leases are atomic.
+- Run IDs fence stale workers.
+- Shared facts use compare-and-swap versions.
+- Artifacts are content-addressed and integrity-checked.
+- Actions require exact capabilities and policy-owned risk classes.
+- Approval binds the exact payload hash.
+- Ambiguous external outcomes become `unknown`, not automatic retries.
+- Mission cancellation terminates the complete worker process group.
+
+## Current status
+
+Version `0.2.0` implements a production-shaped **single-host** control plane using the Python standard library plus SQLite.
+
+Implemented:
+
+- durable missions and dependency-aware tasks
+- priority, scheduling, retry ceilings, and runtime ceilings
+- process-safe task claims
+- leases, heartbeats, fencing, and expired-run recovery
+- exclusive resource keys
+- append-only audit events
+- typed message board and durable subscription cursors
+- versioned owner-scoped facts
+- content-addressed artifacts and provenance
+- capability grants, R0-R4 action policy, approvals, denials, and receipts
+- atomic budget reservations
+- strict JSON subprocess runner
+- optional supervisor-owned verification commands
+- executable and workspace allowlists
+- delegated per-run cgroup containment with a Linux process-tree fallback
+- timeout and cancellation that kill detached descendants
+- secret redaction, common token-encoding scrubbing, and plaintext-secret rejection
+- one-run worker tokens stored only as hashes
+- capability-scoped Unix socket worker API
+- operator and worker CLIs
+- privilege-separated, no-network system-service template
+
+Deliberately not bundled:
+
+- a model provider
+- a browser dashboard
+- generic external side-effect handlers
+- multi-host consensus
+- a claim of exactly-once external execution
+
+See [Architecture](docs/ARCHITECTURE.md), [Operations](docs/OPERATIONS.md), and [Security](SECURITY.md).
+
+## Requirements
+
+- Python 3.11+
+- Linux or another platform supporting Unix-domain sockets for the worker API
+- `setpriv` from util-linux for privilege-separated production workers
+- delegated cgroup v2 for production workers (`--require-cgroup`)
+- Optional: Docker or Podman for custom sandbox adapters
+
+CI targets Python 3.11, 3.12, 3.13, and 3.14.
+
+## Install
+
+```sh
+git clone https://github.com/tylerdotai/agent-loop-system.git
+cd agent-loop-system
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+```
+
+Public commands:
+
+```sh
+.venv/bin/agent-loop --help
+.venv/bin/agent-loop-control --help
+.venv/bin/agent-loop-worker --help
+```
+
+`agent-autonomy` is also installed as a compatibility entrypoint for the optional legacy runtime adapter; it is not part of the runner-agnostic control-plane core.
+
+## Quick start: durable control plane
+
+Initialize local state:
+
+```sh
+CONTROL="$PWD/.venv/bin/agent-loop-control"
+DB="$PWD/.agent-loop/control.db"
+ARTIFACTS="$PWD/.agent-loop/artifacts"
+WORKSPACES="$PWD/.agent-loop/workspaces"
+PYTHON="$PWD/.venv/bin/python"
+CANARY="$PWD/examples/control_plane_canary_worker.py"
+
+mkdir -p "$WORKSPACES"
+chmod 700 "$WORKSPACES"
+
+"$CONTROL" --db "$DB" --artifacts "$ARTIFACTS" init
+```
+
+Create a mission:
+
+```sh
+MISSION_ID=$(
+  "$CONTROL" --db "$DB" mission-create \
+    "Run a governed canary" \
+    --actor operator \
+    --active \
+    --idempotency-key readme-canary:v1 \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["mission_id"])'
+)
+```
+
+Create a task:
+
+```sh
+SPEC_JSON=$(
+  PYTHON="$PYTHON" CANARY="$CANARY" python3 -c '
+import json, os
+print(json.dumps({
+  "command": [os.environ["PYTHON"], os.environ["CANARY"]],
+  "timeout_seconds": 30
+}))
+'
+)
+
+"$CONTROL" --db "$DB" task-create "$MISSION_ID" \
+  "Exercise heartbeat, messages, and artifacts" \
+  --assignee worker \
+  --actor operator \
+  --spec-json "$SPEC_JSON" \
+  --acceptance-json '{"required_evidence_kinds":["command"],"minimum_artifacts":1}' \
+  --max-attempts 1
+```
+
+Run one worker cycle:
+
+```sh
+"$CONTROL" --db "$DB" --artifacts "$ARTIFACTS" worker-daemon \
+  --worker-id canary-1 \
+  --role worker \
+  --allow-command "$PYTHON" \
+  --workspace-root "$WORKSPACES" \
+  --capability context.read \
+  --capability run.heartbeat \
+  --capability message.publish \
+  --capability message.read \
+  --capability subscription.create \
+  --capability subscription.read \
+  --capability subscription.ack \
+  --capability fact.read \
+  --capability fact.write \
+  --capability artifact.read \
+  --capability artifact.write \
+  --capability action.propose \
+  --socket "$PWD/.agent-loop/canary.sock" \
+  --risk-policy-file config/control-risk-policy.example.json \
+  --poll-seconds 0 \
+  --max-cycles 1
+```
+
+Inspect durable state:
+
+```sh
+"$CONTROL" --db "$DB" status
+"$CONTROL" --db "$DB" task-list --mission "$MISSION_ID"
+"$CONTROL" --db "$DB" message-list "$MISSION_ID"
+"$CONTROL" --db "$DB" event-list --after-id 0 --limit 100
+```
+
+The canary crosses real boundaries: subprocess stdin/stdout, run token, Unix socket, heartbeat, typed message, artifact upload, artifact hash verification, completion gate, token revocation, and socket cleanup.
+
+## Operator controls
+
+```sh
+# Stop new claims; current work may finish
+agent-loop-control --db "$DB" mission-pause "$MISSION_ID" \
+  --actor operator --reason "inspection"
+
+# Resume claims
+agent-loop-control --db "$DB" mission-resume "$MISSION_ID" --actor operator
+
+# Cancel queued/running work and terminate the active process group
+agent-loop-control --db "$DB" mission-cancel "$MISSION_ID" \
+  --actor operator --reason "operator stop"
+```
+
+The service manager remains the out-of-band hard stop.
+
+## Worker contract
+
+The coordinator sends one JSON object to worker stdin:
+
+```json
+{
+  "mission_id": "mis_example",
+  "task_id": "tsk_example",
+  "run_id": "run_example",
+  "worker_id": "researcher-1",
+  "goal": "Produce a cited report",
+  "specification": {},
+  "acceptance": {"minimum_artifacts": 1},
+  "context": {"parent_handoffs": []},
+  "workspace": "/workspaces/mis_example/tsk_example",
+  "limits": {"max_runtime_seconds": 900},
+  "control": {
+    "socket_path": "/run/user/1000/agent-loop-researcher-1.sock",
+    "token": "[ONE-RUN TOKEN]"
+  }
+}
+```
+
+The worker returns strict JSON on stdout:
+
+```json
+{
+  "outcome": "candidate_complete",
+  "summary": "Report generated and checked",
+  "artifact_ids": ["art_example"],
+  "evidence": [
+    {"kind": "command", "value": "pytest -q", "exit_code": 0}
+  ],
+  "fact_proposals": [],
+  "residual_risks": [],
+  "requested_followups": []
+}
+```
+
+Valid outcomes are `candidate_complete`, `blocked`, and `failed`. A completion candidate still fails when required evidence or artifact verification fails.
+
+For consequential work, put a supervisor-owned command in the acceptance contract:
+
+```json
+{
+  "required_evidence_kinds": ["command"],
+  "minimum_artifacts": 1,
+  "verification_command": ["python3", "verify_result.py"],
+  "verification_timeout_seconds": 120
+}
+```
+
+The verifier runs as a second bounded process under the same executable, workspace, timeout, and cancellation policy. The verifier receives a sanitized request with no run token. A nonzero verifier exit rejects completion regardless of worker-authored evidence.
+
+## Worker communication
+
+`agent-loop-worker` calls the scoped Unix socket. An adapter may export the run request's control values as `AGENT_LOOP_SOCKET` and `AGENT_LOOP_TOKEN` for tool-using agents.
+
+```sh
+agent-loop-worker context-get
+agent-loop-worker heartbeat --lease-seconds 60
+agent-loop-worker message-post \
+  "mission.$MISSION_ID.general" checkpoint "draft complete"
+agent-loop-worker message-list \
+  --topic-prefix "mission.$MISSION_ID.general"
+agent-loop-worker subscription-create \
+  "mission.$MISSION_ID.research"
+agent-loop-worker fact-get decision/output-format
+agent-loop-worker artifact-put report.md --media-type text/markdown
+agent-loop-worker action-propose external.send \
+  --target-json '{"channel":"review"}' \
+  --arguments-json '{"content_hash":"abc123"}' \
+  --idempotency-key send-review:v1
+```
+
+Workers cannot approve or execute actions through this CLI.
+
+## Action policy
+
+Risk classes:
+
+| Class | Meaning | Treatment |
+|---|---|---|
+| R0 | Read-only or inert | Exact capability required |
+| R1 | Bounded reversible local write | Exact capability required |
+| R2 | Host or service change | Human approval required |
+| R3 | External communication, publication, identity, or spending | Human approval required |
+| R4 | Policy, audit, persistence, privilege, or shutdown mutation | Denied |
+
+Policy example: [`config/control-risk-policy.example.json`](config/control-risk-policy.example.json).
+
+A proposal is inert data. An approved proposal is still inert until supervisor-owned code invokes a registered action handler. Verification reads back the target before issuing a `verified` receipt.
+
+Mission budgets using the `runs` unit are charged atomically before process start. An exhausted configured run budget prevents the worker process from starting. Provider adapters remain responsible for token, dollar, and external-request reservations around actual usage.
+
+## Python API
+
+```python
+from agent_loop import (
+    ActionBroker,
+    ArtifactStore,
+    Coordinator,
+    JsonSubprocessRunner,
+    MessageBoard,
+    SQLiteStore,
+    WorkflowService,
+)
+
+store = SQLiteStore(".agent-loop/control.db")
+workflow = WorkflowService(store)
+board = MessageBoard(store)
+artifacts = ArtifactStore(store, ".agent-loop/artifacts")
+broker = ActionBroker(store, risk_policy={"workspace.write": "R1"})
+
+mission = workflow.create_mission(
+    "Produce verified output",
+    "operator",
+    state="active",
+    idempotency_key="mission:v1",
+)
+```
+
+Provider and runtime adapters should import detailed record types from the defining modules rather than treating the package root as a dump of every implementation class.
+
+## Original closed-loop harness
+
+The compact evaluator loop remains available:
 
 ```text
 goal → worker → evaluator → feedback/history → retry → stop
 ```
 
-It is intentionally small. The harness does not pretend to be the agent. It runs real commands, passes structured state over JSON, records history, and stops when the evaluator says the work passes or the iteration limit is reached.
-
-Use it when you want a reliable local loop around agents, scripts, quality gates, research workflows, code generators, or any worker that can speak JSON over stdin/stdout.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Built With
-
-* [![Python][Python]][Python-url]
-* `subprocess.run(..., shell=False)`
-* JSON stdin/stdout contracts
-* pytest test coverage
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-### Why This Exists
-
-Most “agent loops” get hand-wavy fast. They retry blindly, accept fuzzy success, or hide critical behavior behind mocked internals.
-
-This project keeps the boundary explicit:
-
-* workers do real work
-* evaluators make hard pass/fail decisions
-* state and feedback move forward between attempts
-* command specs are validated before execution
-* evaluator gates require real JSON booleans
-* subprocess output is capped
-* loops are bounded by stop conditions
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Getting Started
-
-### Prerequisites
-
-* Python 3.11+; CI covers 3.11, 3.12, 3.13, and 3.14
-* `pip`
-* Optional for development: `ruff`, `pytest`
-
-### Installation
-
-Clone the repository:
+Run the repository quality-gate example:
 
 ```sh
-git clone https://github.com/tylerdotai/agent-loop-system.git
-cd agent-loop-system
+.venv/bin/agent-loop examples/quality_gate_loop.json
 ```
 
-Install editable:
+A loop spec is trusted executable configuration. Commands remain arrays, use `shell=False`, and can be constrained with executable allowlists, output caps, redaction, timeouts, cwd/env controls, and optional Docker/Podman wrapping.
+
+## Runner-specific adapters
+
+Runner-specific modules are optional adapters and are not imported by the default package namespace. The existing `agent_loop.autonomy` and `agent_loop.hermes_control` modules remain available for installations using those integrations, but the durable core does not depend on Hermes or any other agent runtime.
+
+## Security
+
+Read [SECURITY.md](SECURITY.md) before admitting untrusted workers.
+
+Minimum rules:
+
+1. Never mount the SQLite database, artifact root, policy files, or service definitions into a worker sandbox.
+2. Run untrusted workers under a separate OS identity or container boundary.
+3. Default network egress to none; admit only required model endpoints or proxies.
+4. Treat interpreters as powerful executables even when allowlisted.
+5. Keep provider secrets out of task JSON, messages, facts, artifacts, and action payloads.
+6. Register action handlers only from supervisor-owned code.
+7. Inspect `unknown` action outcomes before considering another attempt.
+8. Keep process supervision and shutdown outside worker control.
+
+The hardened example unit is [`deploy/systemd/agent-loop-worker@.service`](deploy/systemd/agent-loop-worker@.service).
+
+## Quality gate
 
 ```sh
-python3 -m pip install -e .
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+.venv/bin/python -m compileall -q src examples
+.venv/bin/python -m build
 ```
 
-Install development tools:
+The test suite uses real SQLite transactions, multiprocessing claim races, Unix sockets, subprocess groups, timeouts, cancellation, file integrity checks, installed CLI entrypoints, and end-to-end daemon canaries.
 
-```sh
-python3 -m pip install -e ".[dev]"
-```
-
-Run the CLI:
-
-```sh
-agent-loop examples/quality_gate_loop.json
-```
-
-If you do not want to install it yet, run directly from source:
-
-```sh
-PYTHONPATH=src python3 -m agent_loop.cli examples/quality_gate_loop.json
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Usage
-
-Create a loop spec:
-
-```json
-{
-  "goal": "Run the repository quality gate until it passes",
-  "max_iterations": 1,
-  "timeout_seconds": 180,
-  "work_command": ["python3", "examples/quality_gate_worker.py"],
-  "eval_command": ["python3", "examples/quality_gate_evaluator.py"],
-  "context": {
-    "command": ["python3", "-m", "pytest", "-q"],
-    "cwd": ".",
-    "command_timeout_seconds": 120
-  }
-}
-```
-
-Run it:
-
-```sh
-agent-loop examples/quality_gate_loop.json
-```
-
-Successful output has this shape:
-
-```json
-{
-  "goal": "Run the repository quality gate until it passes",
-  "success": true,
-  "iterations": 1,
-  "stop_reason": "eval_passed",
-  "history": [
-    {
-      "attempt": 1,
-      "output": "...",
-      "passed": true,
-      "eval_message": "quality gate passed",
-      "metadata": {
-        "returncode": 0,
-        "command": ["python3", "-m", "pytest", "-q"],
-        "cwd": "."
-      }
-    }
-  ]
-}
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Runtime Contract
-
-A loop spec is a trusted local execution config.
-
-Required fields:
-
-* `goal`: non-empty string
-* `work_command`: non-empty JSON array of strings
-* `eval_command`: non-empty JSON array of strings
-
-Optional fields:
-
-* `max_iterations`: integer, default `5`
-* `timeout_seconds`: positive integer, default `120`
-* `context`: JSON object passed to worker/evaluator state
-* `command_cwd`: existing directory used as the subprocess working directory
-* `command_env`: JSON object of string environment variables merged into the subprocess environment
-* `max_output_chars`: positive integer, default `12000`; worker output and command failure messages are capped to the tail of this size
-* `allowed_commands`: JSON array of executable names or paths allowed by policy, checked before any subprocess starts
-* `redact_values`: JSON array of exact sensitive strings replaced with `[REDACTED]` in reports and command errors
-* `redact_patterns`: JSON array of regular expressions replaced with `[REDACTED]` in reports and command errors
-* `container`: optional Docker/Podman-compatible runtime config for OS-level container execution
-
-### Worker Contract
-
-Worker receives JSON state on `stdin`:
-
-```json
-{
-  "goal": "...",
-  "attempt": 1,
-  "max_iterations": 5,
-  "context": {},
-  "previous_feedback": null,
-  "history": []
-}
-```
-
-Worker returns JSON on `stdout`:
-
-```json
-{
-  "output": "work result",
-  "metadata": {"returncode": 0}
-}
-```
-
-Plain text output is accepted and treated as the worker `output`, but JSON is the production path.
-
-### Evaluator Contract
-
-Evaluator receives JSON on `stdin`:
-
-```json
-{
-  "state": {"goal": "...", "attempt": 1},
-  "result": {"output": "work result", "metadata": {}}
-}
-```
-
-Evaluator must return JSON with a real boolean `passed`:
-
-```json
-{
-  "passed": false,
-  "message": "missing required gate"
-}
-```
-
-Strings like `"false"`, `"no"`, or `"0"` are rejected. Eval gates need hard booleans, not vibes.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Security Model
-
-This harness runs local subprocesses. It uses `shell=False`, validates command arrays, supports allowlisted executables, redacts configured secrets before results are reported, and can run worker/evaluator commands through a Docker/Podman-compatible container runtime.
-
-Do not run untrusted specs without a policy. Specs are executable configuration.
-
-A spec can still point at commands that read files, write files, access the network, or use the current process environment unless you constrain it. The production pattern is:
-
-1. Set `allowed_commands` so only approved executables can start.
-2. Set `redact_values` / `redact_patterns` for sensitive output.
-3. Use `container` with `network: "none"`, `read_only: true`, and explicit read-only volumes when running third-party workers.
-4. Keep `max_iterations`, `timeout_seconds`, and `max_output_chars` bounded.
-
-Current protections:
-
-* no shell interpolation by the harness
-* command arrays are validated before execution
-* executable allowlist policy via `allowed_commands`
-* cwd/env controls are explicit
-* sensitive env values with names containing `secret`, `token`, `password`, `api_key`, or `key` are redacted automatically
-* additional exact-value and regex redaction filters are supported
-* evaluator `passed` must be a JSON boolean
-* malformed specs fail with a clean CLI error
-* subprocess output is capped
-* timeouts are enforced
-* optional OS-level isolation through Docker/Podman-style `container` execution
-
-### Allowlist Policy
-
-```json
-{
-  "allowed_commands": ["python3", "/usr/bin/git"]
-}
-```
-
-The policy checks the raw worker/evaluator executable before container wrapping. A command is allowed when either `command[0]` or its basename appears in `allowed_commands`.
-
-### Container Execution
-
-```json
-{
-  "container": {
-    "runtime": "docker",
-    "image": "python:3.11-slim",
-    "network": "none",
-    "read_only": true,
-    "workdir": "/workspace",
-    "volumes": [
-      {"source": ".", "target": "/workspace", "read_only": true}
-    ]
-  }
-}
-```
-
-This wraps both worker and evaluator commands as:
+## Repository map
 
 ```text
-docker run --rm -i --network none --read-only -w /workspace -v .:/workspace:ro python:3.11-slim <command...>
+src/agent_loop/
+├── persistence.py       # SQLite, events, transactions
+├── workflow.py          # missions, DAGs, claims, leases, recovery
+├── message_board.py     # messages, subscriptions, facts
+├── artifacts.py         # content-addressed immutable outputs
+├── action_broker.py     # capabilities, approvals, budgets, receipts
+├── runner_adapter.py    # bounded JSON subprocess contract
+├── coordinator.py       # claim → run → validate → complete
+├── worker_api.py        # run tokens and Unix socket API
+├── control_cli.py       # operator/supervisor command surface
+├── worker_cli.py        # scoped agent command surface
+├── engine.py            # original pure feedback loop
+└── command_runner.py    # original loop subprocess adapter
 ```
-
-Use `runtime: "podman"` if your environment uses Podman with Docker-compatible flags.
-
-### Secret Redaction
-
-```json
-{
-  "redact_values": ["example-sensitive-value"],
-  "redact_patterns": ["gh[pousr]_[A-Za-z0-9_]+"]
-}
-```
-
-Redaction is applied to worker output, worker metadata, evaluator messages, parsed JSON strings, plain stdout, and command failure text before they enter the final report.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Examples
-
-The repository includes production-shaped examples:
-
-* `examples/quality_gate_loop.json` — runs the project test suite behind a return-code evaluator
-* `examples/allowlist_loop.json` — shows executable policy enforcement with `allowed_commands`
-* `examples/redaction_loop.json` — shows exact-value redaction before report output
-* `examples/container_loop.json` — shows Docker/Podman-style container isolation with read-only mount and no network
-
-Run the non-container examples locally:
-
-```sh
-agent-loop examples/quality_gate_loop.json
-agent-loop examples/allowlist_loop.json
-agent-loop examples/redaction_loop.json
-```
-
-Run the container example when Docker or Podman is available:
-
-```sh
-agent-loop examples/container_loop.json
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Quality Gate
-
-Run the full local gate:
-
-```sh
-python3 -m pip install -e ".[dev]"
-python3 -m pytest -q
-ruff check .
-python3 -m compileall -q src examples
-python3 -m build
-```
-
-At publication time, the project passed:
-
-```text
-18 passed
-All checks passed!
-```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Roadmap
-
-- [x] Strict worker/evaluator subprocess contract
-- [x] Strict evaluator boolean gate
-- [x] Context passthrough
-- [x] cwd/env runtime controls
-- [x] Output caps and timeout handling
-- [x] Installable CLI
-- [x] Command allowlist policy
-- [x] Optional containerized execution
-- [x] Secret redaction filters
-- [x] GitHub Actions CI
-- [x] More worker/evaluator examples
-
-See the [open issues](https://github.com/tylerdotai/agent-loop-system/issues) for proposed features and known issues.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contributing
 
-Contributions are welcome.
+Keep boundaries explicit:
 
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/my-feature`)
-3. Run the quality gate
-4. Commit your changes (`git commit -m 'Add my feature'`)
-5. Push to your branch (`git push origin feature/my-feature`)
-6. Open a pull request
+- tests before behavior changes
+- no shell strings or `shell=True`
+- no model-specific logic in durable state services
+- no direct worker database access
+- no worker approval or audit-write methods
+- no “exactly once” claims without a transactional external target
+- real boundary tests for concurrency, processes, sockets, and filesystems
 
-Please keep the core small and the runtime boundary explicit. If a change weakens spec validation, evaluator strictness, or stop-condition behavior, it needs a very good reason.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+Run the complete quality gate before opening a pull request.
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+MIT. See [LICENSE](LICENSE).
 
 ## Contact
 
-Tyler Delano - [@tylerdotai](https://github.com/tylerdotai)
+Tyler Delano — [GitHub](https://github.com/tylerdotai)
 
-Project Link: [https://github.com/tylerdotai/agent-loop-system](https://github.com/tylerdotai/agent-loop-system)
+Project: [github.com/tylerdotai/agent-loop-system](https://github.com/tylerdotai/agent-loop-system)
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-[contributors-shield]: https://img.shields.io/github/contributors/tylerdotai/agent-loop-system.svg?style=for-the-badge
-[contributors-url]: https://github.com/tylerdotai/agent-loop-system/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/tylerdotai/agent-loop-system.svg?style=for-the-badge
-[forks-url]: https://github.com/tylerdotai/agent-loop-system/network/members
-[stars-shield]: https://img.shields.io/github/stars/tylerdotai/agent-loop-system.svg?style=for-the-badge
-[stars-url]: https://github.com/tylerdotai/agent-loop-system/stargazers
-[issues-shield]: https://img.shields.io/github/issues/tylerdotai/agent-loop-system.svg?style=for-the-badge
-[issues-url]: https://github.com/tylerdotai/agent-loop-system/issues
 [license-shield]: https://img.shields.io/github/license/tylerdotai/agent-loop-system.svg?style=for-the-badge
 [license-url]: https://github.com/tylerdotai/agent-loop-system/blob/main/LICENSE
 [python-shield]: https://img.shields.io/badge/python-3.11%2B-blue.svg?style=for-the-badge&logo=python&logoColor=white
 [python-url]: https://www.python.org/
-[Python]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white
-[Python-url]: https://www.python.org/

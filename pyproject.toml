@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-loop-system"
-version = "0.1.0"
-description = "Production-oriented closed-loop agent harness with eval gates and stop conditions."
+version = "0.2.0"
+description = "Durable local multi-agent control plane with bounded runners and explicit policy gates."
 requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Tyler Delano" }]
-keywords = ["agents", "automation", "evaluation", "loop", "subprocess"]
+keywords = ["agents", "automation", "evaluation", "multi-agent", "orchestration", "sqlite"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -37,6 +37,9 @@ Issues = "https://github.com/tylerdotai/agent-loop-system/issues"
 
 [project.scripts]
 agent-loop = "agent_loop.cli:main"
+agent-loop-control = "agent_loop.control_cli:main"
+agent-loop-worker = "agent_loop.worker_cli:main"
+agent-autonomy = "agent_loop.autonomy_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_loop"]

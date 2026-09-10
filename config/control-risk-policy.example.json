@@ -1,0 +1,7 @@
+{
+  "artifact.publish": "R2",
+  "external.send": "R3",
+  "host.service.restart": "R2",
+  "policy.modify": "R4",
+  "workspace.write": "R1"
+}
