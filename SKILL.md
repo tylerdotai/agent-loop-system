@@ -21,6 +21,7 @@ python3 -m build
 - `agent-loop-control`: operator/supervisor control plane.
 - `agent-loop-worker`: scoped agent access over Unix socket.
 - `agent-autonomy`: optional runtime adapter, never a generic-core dependency.
+- `agent-loop-model-broker`: peer-credentialed Unix-socket gateway to one approved local model.
 
 ## Preserve these boundaries
 
@@ -42,6 +43,10 @@ python3 -m build
 - Enforce executable and resolved-workspace allowlists before launch.
 - Scrub exact, commonly encoded, and long-fragment token forms from output and every WorkerAPI durable-write route.
 - Construct deterministic child environments; never inherit supervisor values implicitly.
+- Keep model-backed workers `AF_UNIX`-only. Let the separate broker validate peer UID plus the live `model.invoke` token before and after inference.
+- Bound broker socket handlers before parsing, expire idle clients, retain timed-out provider slots until exit, and hash caller request IDs before audit persistence.
+- Bind model citations to deterministic evidence IDs; infrastructure resolves IDs to exact file substrings. Cap the final rendered catalog after adding labels, not only the raw source excerpt.
+- Install audit targets root-owned with directories `0755` and readable files `0644`; a read-only verifier cannot hash files hidden by accidental `0600` source modes.
 
 ## Component map
 
@@ -56,6 +61,8 @@ python3 -m build
 - `worker_api.py`: run tokens and Unix socket methods.
 - `control_cli.py`: operator commands.
 - `worker_cli.py`: scoped worker commands.
+- `model_broker.py`: worker peer identity, live token reauthorization, model limits, and metadata-only audit.
+- `repository_audit.py`: model-backed audit roles with deterministic evidence-ID binding.
 
 ## Test map
 
@@ -67,6 +74,7 @@ python3 -m build
 - Operator CLI and daemon canary: `tests/test_control_cli.py`
 - Adversarial boundaries: `tests/test_control_plane_adversarial.py`
 - Package surface: `tests/test_public_api.py`
+- Model broker and audit: `tests/test_model_broker.py`, `tests/test_repository_audit.py`
 
 New behavior requires a failing boundary test first. After targeted green, run the complete gate, a clean-install CLI smoke test, and a real enabled-service canary before calling deployment complete.
 

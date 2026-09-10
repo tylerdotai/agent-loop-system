@@ -40,6 +40,7 @@ agent-loop = "agent_loop.cli:main"
 agent-loop-control = "agent_loop.control_cli:main"
 agent-loop-worker = "agent_loop.worker_cli:main"
 agent-autonomy = "agent_loop.autonomy_cli:main"
+agent-loop-model-broker = "agent_loop.model_broker_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_loop"]

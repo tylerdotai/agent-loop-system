@@ -15,6 +15,8 @@ def test_top_level_api_exports_runner_agnostic_control_plane() -> None:
         "JsonSubprocessRunner",
         "LoopEngine",
         "MessageBoard",
+        "ModelBroker",
+        "ModelBrokerPolicy",
         "SQLiteStore",
         "WorkflowService",
         "WorkerAPI",
@@ -35,3 +37,6 @@ def test_control_plane_has_an_installed_cli_entrypoint() -> None:
 
     assert metadata["project"]["scripts"]["agent-loop-control"] == "agent_loop.control_cli:main"
     assert metadata["project"]["scripts"]["agent-loop-worker"] == "agent_loop.worker_cli:main"
+    assert metadata["project"]["scripts"]["agent-loop-model-broker"] == (
+        "agent_loop.model_broker_cli:main"
+    )

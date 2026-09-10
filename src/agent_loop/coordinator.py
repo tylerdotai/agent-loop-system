@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from .action_broker import BudgetExceededError, BudgetService
 from .artifacts import ArtifactStore
 from .runner_adapter import JsonSubprocessRunner, RunRequest, RunnerResult
-from .workflow import Task, WorkflowService
+from .workflow import LeaseError, Task, WorkflowService
 from .worker_api import RunTokenService
 
 
@@ -85,6 +86,8 @@ class Coordinator:
         task = claim.task
         run = claim.run
         token_issued = False
+        heartbeat_stop: threading.Event | None = None
+        heartbeat_thread: threading.Thread | None = None
         try:
             if self.budgets is not None:
                 try:
@@ -136,23 +139,43 @@ class Coordinator:
                 },
                 control=control,
             )
-            heartbeat_interval = max(0.05, min(self.lease_seconds / 3, 30.0))
-            next_heartbeat_at = time.monotonic() + heartbeat_interval
+            heartbeat_interval = max(0.001, min(self.lease_seconds / 4, 30.0))
+            heartbeat_stop = threading.Event()
+            heartbeat_errors: list[BaseException] = []
+
+            def renew_run() -> None:
+                self.workflow.heartbeat(
+                    task.task_id,
+                    run.run_id,
+                    self.worker_id,
+                    lease_seconds=self.lease_seconds,
+                )
+
+            def heartbeat_loop() -> None:
+                assert heartbeat_stop is not None
+                while not heartbeat_stop.wait(heartbeat_interval):
+                    try:
+                        renew_run()
+                    except BaseException as exc:
+                        heartbeat_errors.append(exc)
+                        heartbeat_stop.set()
+                        return
 
             def maintain_run() -> bool:
-                nonlocal next_heartbeat_at
+                if heartbeat_errors:
+                    raise heartbeat_errors[0]
                 current = self.workflow.get_task(task.task_id)
                 if current.status != "running" or current.current_run_id != run.run_id:
                     return True
-                if time.monotonic() >= next_heartbeat_at:
-                    self.workflow.heartbeat(
-                        task.task_id,
-                        run.run_id,
-                        self.worker_id,
-                        lease_seconds=self.lease_seconds,
-                    )
-                    next_heartbeat_at = time.monotonic() + heartbeat_interval
                 return False
+
+            renew_run()
+            heartbeat_thread = threading.Thread(
+                target=heartbeat_loop,
+                name=f"agent-loop-heartbeat-{run.run_id}",
+                daemon=True,
+            )
+            heartbeat_thread.start()
 
             result = self.runner.run(
                 request,
@@ -162,6 +185,7 @@ class Coordinator:
                 env=env,
                 cancel_requested=maintain_run,
             )
+            renew_run()
             validation_error = self._validate_candidate(task, result)
             if validation_error is not None:
                 self.workflow.fail(
@@ -238,6 +262,7 @@ class Coordinator:
                         outcome="verification_failed",
                     )
                     return CoordinatorResult(task.task_id, run.run_id, "failed", error=error)
+                renew_run()
                 completion_metadata["verification"] = verification.metadata()
             self.workflow.complete(
                 task.task_id,
@@ -251,15 +276,22 @@ class Coordinator:
             error = f"{type(exc).__name__}: {exc}"
             current = self.workflow.get_task(task.task_id)
             if current.status == "running" and current.current_run_id == run.run_id:
-                self.workflow.fail(
-                    task.task_id,
-                    run.run_id,
-                    self.worker_id,
-                    error,
-                    outcome="runner_failed",
-                )
+                try:
+                    self.workflow.fail(
+                        task.task_id,
+                        run.run_id,
+                        self.worker_id,
+                        error,
+                        outcome="runner_failed",
+                    )
+                except LeaseError:
+                    pass
             return CoordinatorResult(task.task_id, run.run_id, "failed", error=error)
         finally:
+            if heartbeat_stop is not None:
+                heartbeat_stop.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=2)
             if token_issued and self.run_tokens is not None:
                 self.run_tokens.revoke_run(run.run_id, actor_id="coordinator")
 
@@ -341,7 +373,8 @@ class Coordinator:
 
     def _validate_candidate(self, task: Task, result: RunnerResult) -> str | None:
         if result.outcome != "candidate_complete":
-            return f"runner outcome is not a completion candidate: {result.outcome}"
+            detail = f": {result.summary}" if result.summary else ""
+            return f"runner outcome is not a completion candidate: {result.outcome}{detail}"
         required = task.acceptance.get("required_evidence_kinds", [])
         if not isinstance(required, list) or not all(isinstance(kind, str) and kind for kind in required):
             return "acceptance.required_evidence_kinds must be a list of non-empty strings"

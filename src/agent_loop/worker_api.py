@@ -259,6 +259,47 @@ class WorkerAPI:
         principal = self.tokens.authorize(token, "context.read")
         return self.workflow.build_task_context(principal.task_id)
 
+    def authorize_model(self, token: str) -> dict[str, Any]:
+        principal = self.tokens.authorize(token, "model.invoke")
+        task = self.workflow.get_task(principal.task_id)
+        request = task.specification.get("model_request")
+        if not isinstance(request, dict):
+            raise TokenAuthorizationError("task does not authorize model requests")
+        model = request.get("model")
+        max_tokens = request.get("max_tokens")
+        max_prompt_chars = request.get("max_prompt_chars")
+        temperature = request.get("temperature", 0.0)
+        if not isinstance(model, str) or not model.strip():
+            raise TokenAuthorizationError("model_request.model must be a non-empty string")
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 1:
+            raise TokenAuthorizationError("model_request.max_tokens must be a positive integer")
+        if (
+            isinstance(max_prompt_chars, bool)
+            or not isinstance(max_prompt_chars, int)
+            or max_prompt_chars < 1
+        ):
+            raise TokenAuthorizationError(
+                "model_request.max_prompt_chars must be a positive integer"
+            )
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (int, float))
+            or not math.isfinite(float(temperature))
+            or not 0 <= float(temperature) <= 2
+        ):
+            raise TokenAuthorizationError("model_request.temperature must be between 0 and 2")
+        return {
+            "worker_id": principal.actor_id,
+            "mission_id": principal.mission_id,
+            "task_id": principal.task_id,
+            "run_id": principal.run_id,
+            "expires_at": principal.expires_at,
+            "model": model,
+            "max_tokens": max_tokens,
+            "max_prompt_chars": max_prompt_chars,
+            "temperature": float(temperature),
+        }
+
     def post_message(
         self,
         token: str,
@@ -503,7 +544,7 @@ class _ThreadingUnixServer(socketserver.ThreadingUnixStreamServer):
 
 
 class ControlSocketServer:
-    """Line-delimited JSON worker API over a mode-0600 Unix socket."""
+    """Line-delimited JSON worker API over an owner-only Unix socket."""
 
     max_request_bytes = 36 * 1024 * 1024
     max_response_bytes = 36 * 1024 * 1024
@@ -515,6 +556,7 @@ class ControlSocketServer:
         *,
         owner_uid: int | None = None,
         owner_gid: int | None = None,
+        mode: int = 0o600,
     ) -> None:
         self.path = Path(path).expanduser().resolve()
         self.api = api
@@ -522,6 +564,9 @@ class ControlSocketServer:
             raise ValueError("socket owner_uid and owner_gid must be configured together")
         self.owner_uid = owner_uid
         self.owner_gid = owner_gid
+        if isinstance(mode, bool) or not isinstance(mode, int) or mode not in {0o600, 0o660}:
+            raise ValueError("socket mode must be 0600 or 0660")
+        self.mode = mode
         self._server: _ThreadingUnixServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -552,7 +597,7 @@ class ControlSocketServer:
                 self.wfile.write(json.dumps(response, separators=(",", ":")).encode("utf-8") + b"\n")
 
         self._server = _ThreadingUnixServer(str(self.path), Handler)
-        os.chmod(self.path, 0o600)
+        os.chmod(self.path, self.mode)
         if self.owner_uid is not None and self.owner_gid is not None:
             os.chown(self.path, self.owner_uid, self.owner_gid)
         self._thread = threading.Thread(target=self._server.serve_forever, name="agent-loop-control", daemon=True)
@@ -593,6 +638,8 @@ class ControlSocketServer:
     def _dispatch(self, token: str, method: str, params: dict[str, Any]) -> Any:
         if method == "context.get":
             return self.api.get_context(token)
+        if method == "model.authorize":
+            return self.api.authorize_model(token)
         if method == "message.publish":
             return asdict(self.api.post_message(token, **params))
         if method == "message.list":

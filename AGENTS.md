@@ -13,6 +13,7 @@
 - `agent-loop-control`: operator and supervisor control-plane CLI.
 - `agent-loop-worker`: capability-scoped worker client for the Unix socket API.
 - `agent-autonomy`: optional runner-specific autonomy adapter; not part of the generic core.
+- `agent-loop-model-broker`: Unix-socket gateway to an approved loopback local model.
 
 Without installation, use `PYTHONPATH=src python3 -m agent_loop.<module>`.
 
@@ -28,6 +29,8 @@ Without installation, use `PYTHONPATH=src python3 -m agent_loop.<module>`.
 - `worker_api.py`: run-token hashes and capability-scoped Unix socket methods.
 - `control_cli.py`: operator/supervisor command surface.
 - `worker_cli.py`: scoped worker command surface; must never expose approval or action execution.
+- `model_broker.py`: peer UID, live run authorization, model limits, and metadata-only broker audit.
+- `repository_audit.py`: read-only model-backed audit roles with deterministic evidence IDs.
 - `engine.py` / `command_runner.py`: original feedback-loop harness.
 - `autonomy.py` / `hermes_control.py`: optional runtime adapter layer. Generic modules must not import these.
 

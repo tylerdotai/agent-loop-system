@@ -74,12 +74,14 @@ Implemented:
 - secret redaction, common token-encoding scrubbing, and plaintext-secret rejection
 - one-run worker tokens stored only as hashes
 - capability-scoped Unix socket worker API
+- loopback-only local-model broker with peer-UID and live run-token authorization
+- read-only multi-agent repository audit with deterministic evidence IDs
 - operator and worker CLIs
 - privilege-separated, no-network system-service template
 
 Deliberately not bundled:
 
-- a model provider
+- model weights or a model runtime
 - a browser dashboard
 - generic external side-effect handlers
 - multi-host consensus
@@ -112,6 +114,7 @@ Public commands:
 .venv/bin/agent-loop --help
 .venv/bin/agent-loop-control --help
 .venv/bin/agent-loop-worker --help
+.venv/bin/agent-loop-model-broker --help
 ```
 
 `agent-autonomy` is also installed as a compatibility entrypoint for the optional legacy runtime adapter; it is not part of the runner-agnostic control-plane core.

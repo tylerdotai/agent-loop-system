@@ -1,0 +1,55 @@
+[Unit]
+Description=Agent Loop local-model broker
+After=network-online.target
+Wants=network-online.target
+ConditionFileIsExecutable=/opt/agent-loop-system/.venv/bin/agent-loop-model-broker
+ConditionPathExists=/etc/agent-loop/model-broker.env
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=agent-loop-model
+Group=agent-loop-worker
+EnvironmentFile=/etc/agent-loop/model-broker.env
+UMask=0007
+RuntimeDirectory=agent-loop-model
+RuntimeDirectoryMode=0750
+LogsDirectory=agent-loop-model
+LogsDirectoryMode=0750
+ExecStart=/opt/agent-loop-system/.venv/bin/agent-loop-model-broker \
+  --socket /run/agent-loop-model/broker.sock \
+  --endpoint ${AGENT_LOOP_MODEL_ENDPOINT} \
+  --model ${AGENT_LOOP_MODEL} \
+  --worker-user agent-loop-worker \
+  --control-socket-root /run/agent-loop \
+  --audit-log /var/log/agent-loop-model/audit.jsonl \
+  --max-tokens 2048 \
+  --max-prompt-chars 24000 \
+  --timeout-seconds 180 \
+  --connection-timeout-seconds 5 \
+  --max-concurrent 3
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1
+ReadWritePaths=/run/agent-loop-model /var/log/agent-loop-model
+MemoryMax=1G
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

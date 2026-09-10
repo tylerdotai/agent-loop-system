@@ -39,6 +39,7 @@ Assume a worker may attempt to:
 - reuse idempotency keys with changed payloads
 - obtain approval for one payload and execute another
 - leak credentials through stdout, stderr, messages, artifacts, or action payloads
+- bypass model policy by connecting directly to a provider or forging broker attribution
 - survive timeout or cancellation through child processes
 - manipulate scorers, policy, audit records, or shutdown controls
 - trigger an external effect repeatedly after ambiguous failure
@@ -77,6 +78,11 @@ Assume the operator, control-plane process, SQLite database, risk policy, servic
 - The dynamic one-run token, common base encodings, hexadecimal form, and sufficiently long fragments are scrubbed before output parsing or persistence.
 - The active run token is rejected if a worker tries to persist it through messages, facts, artifacts, or action payloads.
 - The daemon's example systemd unit restricts filesystem access, privilege gain, memory, task count, and address families.
+- Model-backed workers retain `AF_UNIX` only. The separate broker validates Linux peer credentials, reauthorizes the current run before and after inference, applies canonical task limits, and alone receives loopback provider access.
+- Broker socket handlers are admitted before parsing against a hard cap, idle clients expire, and excess clients fail fast.
+- Provider calls have a total wall-clock deadline; timed-out calls retain their concurrency slot until actual exit.
+- Broker audit records identity, timing, hashed request IDs, and validated numeric token counts; prompts, responses, caller-controlled identifiers, and run tokens are not logged.
+- Repository-audit models select deterministic evidence IDs. Infrastructure binds each ID to an exact file and substring before accepting a finding.
 
 ### Artifacts
 
@@ -111,7 +117,7 @@ All state transitions append attributed events. Workers cannot call an audit-wri
 4. Prefer an ephemeral workspace per task.
 5. Set `Delegate=yes` and pass `--require-cgroup`; fail startup when cgroup v2 delegation is unavailable.
 6. Use read-only base filesystems and explicit writable mounts.
-7. Default network access to none. Add only the model endpoint or proxy required by the role.
+7. Default worker network access to none. Put model connectivity behind the Unix-socket broker rather than granting workers TCP access.
 8. Put provider credentials in a dedicated secret broker or process environment injected at launch. Never put secret values in task specifications, messages, facts, action payloads, or artifacts.
 9. Set explicit task runtime, retry, output, budget, and concurrency ceilings.
 10. Register action handlers in supervisor-owned code. Never load handler code from worker-controlled paths.

@@ -10,13 +10,14 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 ```
 
-Verify all four installed entrypoints. `agent-autonomy` is the compatibility CLI for the optional runtime-specific adapter; the other three are the runner-agnostic core and worker surfaces:
+Verify all five installed entrypoints. `agent-autonomy` is the compatibility CLI for the optional runtime-specific adapter; the remaining commands are runner-agnostic:
 
 ```sh
 .venv/bin/agent-loop --help
 .venv/bin/agent-loop-control --help
 .venv/bin/agent-loop-worker --help
 .venv/bin/agent-autonomy --help
+.venv/bin/agent-loop-model-broker --help
 ```
 
 ## Runtime directories
@@ -309,6 +310,49 @@ The supervisor receives only `CAP_SETUID`, `CAP_SETGID`, `CAP_CHOWN`, and `CAP_S
 The unit also sets `Delegate=yes` and passes `--require-cgroup`. Do not combine this with `ProtectControlGroups=true`: that directive makes the delegated hierarchy read-only inside a system service. Systemd ownership restricts writes to the service's delegated subtree. Startup fails closed when cgroup v2 delegation is unavailable. A trusted launcher attaches each worker and verifier to a fresh per-run cgroup before untrusted code executes. Return, timeout, and cancellation kill all remaining descendants with `cgroup.kill` and remove the subtree.
 
 The supplied unit allows only `AF_UNIX`; provider-backed agents need a separately reviewed proxy or network policy. Do not casually replace that boundary with unrestricted egress.
+
+## Local-model broker and repository audit
+
+The model runtime is external to Agent Loop System and must expose one approved OpenAI-compatible model on loopback. Workers never receive that endpoint. Configure the broker through a root-only environment file:
+
+```sh
+sudo useradd --system --gid agent-loop-worker --home-dir /nonexistent \
+  --shell /usr/sbin/nologin --no-create-home agent-loop-model
+sudo install -o root -g root -m 0600 \
+  config/model-broker.example.env /etc/agent-loop/model-broker.env
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/agent-loop-model-broker.service \
+  /etc/systemd/system/agent-loop-model-broker.service
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/agent-loop-audit-worker@.service \
+  /etc/systemd/system/agent-loop-audit-worker@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-loop-model-broker.service
+```
+
+The broker socket is mode `0660`, owned by `agent-loop-model:agent-loop-worker`. Audit workers use control sockets explicitly configured as mode `0660`; ordinary workers remain mode `0600`. The broker validates the worker's kernel peer UID and calls `model.authorize` on the trusted control socket before and after inference. Socket handlers are capped at model concurrency, idle request reads expire after five seconds, and provider calls have a total deadline. The broker log stores identity, timing, hashed request IDs, and validated numeric token counts only.
+
+Enable the role-specific audit workers:
+
+```sh
+for role in planner security testing architecture synthesis verifier; do
+  sudo systemctl enable --now "agent-loop-audit-worker@$role.service"
+done
+```
+
+Repository-audit task specifications must include `audit_role`, `repository_root`, `repository_digest`, `model_broker_socket`, and a bounded `model_request`. Give each role the `model.invoke` capability and set a mission `runs` budget equal to the admitted DAG size. The final verifier command is:
+
+```json
+{
+  "verification_command": [
+    "/opt/agent-loop-system/.venv/bin/python",
+    "-m",
+    "agent_loop.repository_audit_verify"
+  ]
+}
+```
+
+Specialist models select deterministic evidence IDs rather than writing citations. Infrastructure resolves each selected ID to an exact repository file and substring. The verifier receives no run token and rejects changes to any non-cache path, entry type, mode, symlink target, or file body.
 
 ## Recovery
 

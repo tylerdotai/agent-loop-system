@@ -3,6 +3,7 @@ from .artifacts import ArtifactStore
 from .coordinator import Coordinator
 from .engine import ActionResult, HistoryEntry, LoopEngine, LoopReport, LoopSpec
 from .message_board import MessageBoard
+from .model_broker import ModelBroker, ModelBrokerPolicy
 from .persistence import SQLiteStore
 from .runner_adapter import JsonSubprocessRunner
 from .worker_api import WorkerAPI
@@ -20,6 +21,8 @@ __all__ = [
     "LoopReport",
     "LoopSpec",
     "MessageBoard",
+    "ModelBroker",
+    "ModelBrokerPolicy",
     "SQLiteStore",
     "WorkerAPI",
     "WorkflowService",

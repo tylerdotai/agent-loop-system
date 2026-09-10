@@ -402,6 +402,37 @@ def test_coordinator_rejects_candidate_missing_required_evidence(tmp_path: Path)
     assert workflow.list_runs(task.task_id)[0].outcome == "validation_failed"
 
 
+def test_coordinator_preserves_redacted_worker_failure_summary(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "control.db")
+    workflow = WorkflowService(store)
+    mission = workflow.create_mission("Diagnose failure", "operator", state="active")
+    failed = valid_result("model broker socket was unavailable")
+    failed["outcome"] = "failed"
+    task = workflow.create_task(
+        mission.mission_id,
+        "Fail with bounded detail",
+        "worker",
+        actor_id="planner",
+        specification={"command": [sys.executable, "-c", f"print({json.dumps(failed)!r})"]},
+        max_attempts=1,
+    )
+    coordinator = Coordinator(
+        workflow,
+        JsonSubprocessRunner(allowed_commands={Path(sys.executable).name}),
+        worker_id="worker-1",
+        roles={"worker"},
+    )
+
+    result = coordinator.run_once()
+
+    assert result is not None
+    assert result.status == "failed"
+    assert "model broker socket was unavailable" in (result.error or "")
+    assert "model broker socket was unavailable" in (
+        workflow.list_runs(task.task_id)[0].error or ""
+    )
+
+
 def test_supervisor_verification_command_must_pass_before_completion(tmp_path: Path) -> None:
     store = SQLiteStore(tmp_path / "control.db")
     workflow = WorkflowService(store)
@@ -713,17 +744,38 @@ def test_mission_cancellation_stops_the_live_worker_process(tmp_path: Path) -> N
     assert not survived.exists()
 
 
-def test_coordinator_heartbeats_healthy_process_without_model_cooperation(tmp_path: Path) -> None:
+def test_coordinator_heartbeats_healthy_process_without_model_cooperation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store = SQLiteStore(tmp_path / "control.db")
     workflow = WorkflowService(store)
     mission = workflow.create_mission("Infrastructure heartbeat", "operator", state="active")
     started = tmp_path / "heartbeat-started"
+    release = tmp_path / "heartbeat-release"
+    heartbeat_seen = threading.Event()
+    heartbeat_calls = 0
+    original_heartbeat = workflow.heartbeat
+
+    def recording_heartbeat(*args, **kwargs):
+        nonlocal heartbeat_calls
+        result = original_heartbeat(*args, **kwargs)
+        heartbeat_calls += 1
+        if started.exists() and heartbeat_calls >= 2:
+            heartbeat_seen.set()
+        return result
+
+    monkeypatch.setattr(workflow, "heartbeat", recording_heartbeat)
     payload = json.dumps(valid_result("healthy long task"))
-    source = (
-        "import pathlib,time; "
-        f"pathlib.Path({str(started)!r}).write_text('started'); "
-        "time.sleep(0.65); "
-        f"print({payload!r})"
+    source = "\n".join(
+        (
+            "import pathlib,time",
+            f"pathlib.Path({str(started)!r}).write_text('started')",
+            "deadline=time.time()+5",
+            f"while not pathlib.Path({str(release)!r}).exists() and time.time()<deadline:",
+            "    time.sleep(0.02)",
+            f"print({payload!r})",
+        )
     )
     workflow.create_task(
         mission.mission_id,
@@ -731,32 +783,34 @@ def test_coordinator_heartbeats_healthy_process_without_model_cooperation(tmp_pa
         "worker",
         actor_id="planner",
         specification={"command": [sys.executable, "-c", source], "cwd": str(tmp_path)},
-        max_runtime_seconds=2,
+        max_runtime_seconds=6,
     )
     coordinator = Coordinator(
         workflow,
         JsonSubprocessRunner(allowed_commands={Path(sys.executable).name}),
         worker_id="worker-1",
         roles={"worker"},
-        lease_seconds=0.25,
+        lease_seconds=2,
     )
     outcomes: list = []
     thread = threading.Thread(target=lambda: outcomes.append(coordinator.run_once()))
     thread.start()
-    for _ in range(100):
+    for _ in range(200):
         if started.exists():
             break
         time.sleep(0.01)
     assert started.exists()
-    time.sleep(0.35)
+    assert heartbeat_seen.wait(timeout=3)
 
     recovered = workflow.recover_expired("watchdog")
+    release.write_text("continue", encoding="utf-8")
     thread.join(timeout=3)
 
     assert recovered == []
     assert not thread.is_alive()
     assert outcomes[0] is not None
-    assert outcomes[0].status == "completed"
+    assert outcomes[0].status == "completed", outcomes[0]
+    assert heartbeat_calls >= 2
 
 
 def test_exhausted_mission_run_budget_prevents_worker_process_start(tmp_path: Path) -> None:

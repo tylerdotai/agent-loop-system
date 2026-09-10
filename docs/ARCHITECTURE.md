@@ -13,15 +13,17 @@ Implemented in `0.2.0`:
 - versioned, owner-scoped shared facts
 - content-addressed artifacts with provenance and integrity checks
 - action capabilities, risk policy, approvals, budgets, execution receipts, and readback verification
-- strict JSON subprocess contract with process-group timeout and cancellation
+- strict JSON subprocess contract with delegated-cgroup timeout and cancellation
 - optional supervisor-owned verification command before completion
 - one-run worker tokens and a capability-scoped Unix socket API
+- a peer-credentialed Unix-socket model broker with canonical per-task limits
+- planner, specialist, synthesis, and verifier repository-audit workers
 - operator and worker CLIs
 
 Not implemented:
 
 - distributed consensus or multi-host leadership
-- a built-in model provider
+- bundled model weights or model runtime
 - generic external side-effect handlers
 - a browser dashboard
 - exactly-once external effects
@@ -66,13 +68,18 @@ flowchart LR
     RUNNER --> AGENT[Script / Agent Adapter]
 
     AGENT --> WC[agent-loop-worker]
-    WC --> SOCK[0600 Unix Socket]
+    WC --> SOCK[0600/0660 Unix Socket]
     SOCK --> API[Worker API]
     API --> TOKENS
     API --> MB
     API --> FS
     API --> ART
     API --> AB
+
+    AGENT --> MODEL_SOCK[Model Broker Unix Socket]
+    MODEL_SOCK --> MODEL_BROKER[Local Model Broker]
+    MODEL_BROKER -->|loopback only| MODEL[Approved Local Model]
+    MODEL_BROKER -->|model.authorize| SOCK
 
     AB --> HANDLER[Operator-registered Action Handler]
     HANDLER --> TARGET[External or Host Target]
@@ -119,7 +126,7 @@ A worker receives:
 - the Unix socket path
 - only the filesystem and network access granted by the launcher
 
-The supplied launcher resolves the worker account before dispatch, wraps the already-allowlisted command with trusted `setpriv` arguments, clears supplementary groups and all capability sets, enables `no_new_privs`, and sets a parent-death signal. The child receives a constructed environment instead of inheriting supervisor secrets. Default task workspaces and the mode-`0600` control socket are chowned to the worker identity; canonical state remains owned by the control identity.
+The supplied launcher resolves the worker account before dispatch, wraps the already-allowlisted command with trusted `setpriv` arguments, clears supplementary groups and all capability sets, enables `no_new_privs`, and sets a parent-death signal. The child receives a constructed environment instead of inheriting supervisor secrets. Default task workspaces and mode-`0600` or explicitly group-shared mode-`0660` control sockets are chowned to the worker identity; canonical state remains owned by the control identity.
 
 A worker does not receive:
 
@@ -128,7 +135,14 @@ A worker does not receive:
 - approval authority
 - action-handler access
 - audit-table write access
+- a model endpoint or provider credential
 - policy-file write access
+
+### Model-broker zone
+
+The broker runs under a third OS identity. Linux peer credentials admit only the worker UID. The broker validates the existing one-run token through `model.authorize`, derives model and request limits from canonical task specification, and repeats authorization after inference before releasing output. Workers keep `AF_UNIX` only; the broker alone receives loopback TCP access. Pre-parse socket admission, idle-read deadlines, and total provider deadlines bound availability. Broker audit hashes caller request IDs, accepts only validated numeric usage, and excludes prompts, responses, and tokens.
+
+Repository-audit specialists do not submit free-form citations. Each model selects an ID from a deterministic evidence catalog, and infrastructure resolves that ID to an exact repository file and source substring. Synthesis may reorder canonical findings but cannot rewrite evidence. The final verifier receives no run token and recomputes a structural digest over every non-cache path, entry type, mode, symlink target, and complete file body.
 
 The Unix socket authenticates every method with the token hash and rechecks that the referenced run remains current and active.
 

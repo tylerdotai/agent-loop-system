@@ -48,6 +48,8 @@ def test_worker_commands_expose_optional_os_identity_drop() -> None:
             "context.read",
             "--socket",
             "control.sock",
+            "--socket-mode",
+            "0660",
         ]
     )
 
@@ -55,6 +57,7 @@ def test_worker_commands_expose_optional_os_identity_drop() -> None:
     assert daemon.worker_user == "agent-loop-worker"
     assert worker_run.require_cgroup is True
     assert daemon.require_cgroup is True
+    assert daemon.socket_mode == 0o660
 
 
 def test_system_service_separates_control_state_from_worker_identity() -> None:
@@ -88,6 +91,7 @@ def test_operations_guide_verifies_every_installed_entrypoint() -> None:
         "agent-loop-control --help",
         "agent-loop-worker --help",
         "agent-autonomy --help",
+        "agent-loop-model-broker --help",
     ):
         assert command in operations
 
@@ -96,3 +100,21 @@ def test_operations_guide_keeps_policy_unreadable_by_worker_identity() -> None:
     operations = (ROOT / "docs/OPERATIONS.md").read_text(encoding="utf-8")
 
     assert "sudo install -o root -g agent-loop-control -m 0640" in operations
+
+
+def test_model_broker_and_audit_workers_preserve_network_boundary() -> None:
+    broker = (ROOT / "deploy/systemd/agent-loop-model-broker.service").read_text(encoding="utf-8")
+    worker = (ROOT / "deploy/systemd/agent-loop-audit-worker@.service").read_text(encoding="utf-8")
+
+    assert "User=agent-loop-model" in broker
+    assert "Group=agent-loop-worker" in broker
+    assert "RestrictAddressFamilies=AF_UNIX AF_INET" in broker
+    assert "IPAddressDeny=any" in broker
+    assert "IPAddressAllow=127.0.0.1" in broker
+    assert "--connection-timeout-seconds 5" in broker
+    assert "User=agent-loop-control" in worker
+    assert "RestrictAddressFamilies=AF_UNIX" in worker
+    assert "--capability model.invoke" in worker
+    assert "--socket-mode 0660" in worker
+    assert "Delegate=yes" in worker
+    assert "ProtectControlGroups=true" not in worker

@@ -29,12 +29,23 @@ class FakeClock:
         return self.value
 
 
-def build_worker_api(tmp_path: Path, capabilities: set[str]):
+def build_worker_api(
+    tmp_path: Path,
+    capabilities: set[str],
+    *,
+    specification: dict[str, object] | None = None,
+):
     clock = FakeClock()
     store = SQLiteStore(tmp_path / "control.db")
     workflow = WorkflowService(store, clock=clock)
     mission = workflow.create_mission("Scoped API", "operator", state="active")
-    workflow.create_task(mission.mission_id, "Worker task", "worker", actor_id="planner")
+    workflow.create_task(
+        mission.mission_id,
+        "Worker task",
+        "worker",
+        actor_id="planner",
+        specification=specification,
+    )
     claim = workflow.claim_next("worker-1", {"worker"}, lease_seconds=30)
     assert claim is not None
     tokens = RunTokenService(store, workflow, clock=clock)
@@ -60,6 +71,38 @@ def test_run_token_is_stored_as_hash_and_bound_to_current_run(tmp_path: Path) ->
     assert issued.token not in " ".join(str(value) for value in row)
     assert row["run_id"] == claim.run.run_id
     assert row["actor_id"] == "worker-1"
+
+
+def test_model_authorization_is_derived_from_current_task_and_token(tmp_path: Path) -> None:
+    _, _, workflow, claim, issued, api = build_worker_api(
+        tmp_path,
+        {"model.invoke"},
+        specification={
+            "model_request": {
+                "model": "nemotron-3.5-lightning-30b-a3b",
+                "max_tokens": 768,
+                "max_prompt_chars": 12_000,
+                "temperature": 0.1,
+            }
+        },
+    )
+
+    authorization = api.authorize_model(issued.token)
+
+    assert authorization == {
+        "worker_id": "worker-1",
+        "mission_id": claim.task.mission_id,
+        "task_id": claim.task.task_id,
+        "run_id": claim.run.run_id,
+        "expires_at": issued.principal.expires_at,
+        "model": "nemotron-3.5-lightning-30b-a3b",
+        "max_tokens": 768,
+        "max_prompt_chars": 12_000,
+        "temperature": 0.1,
+    }
+    workflow.cancel_mission(claim.task.mission_id, "operator", reason="test cancellation")
+    with pytest.raises(TokenAuthorizationError, match="current active run"):
+        api.authorize_model(issued.token)
 
 
 def test_worker_message_identity_and_scope_are_derived_from_token(tmp_path: Path) -> None:
@@ -426,7 +469,13 @@ def test_unix_socket_can_be_owned_by_privilege_separated_worker(
         lambda path, uid, gid: ownership.append((Path(path), uid, gid)),
     )
 
-    with ControlSocketServer(socket_path, api, owner_uid=23456, owner_gid=23457):
-        assert socket_path.stat().st_mode & 0o777 == 0o600
+    with ControlSocketServer(
+        socket_path,
+        api,
+        owner_uid=23456,
+        owner_gid=23457,
+        mode=0o660,
+    ):
+        assert socket_path.stat().st_mode & 0o777 == 0o660
 
     assert ownership == [(socket_path, 23456, 23457)]

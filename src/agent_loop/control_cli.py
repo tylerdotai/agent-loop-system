@@ -174,6 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--redact-value", action="append", default=[])
     daemon.add_argument("--capability", action="append", required=True)
     daemon.add_argument("--socket", required=True)
+    daemon.add_argument("--socket-mode", type=_socket_mode, default=0o600)
     daemon.add_argument("--lease-seconds", type=float, default=900)
     daemon.add_argument("--poll-seconds", type=float, default=1)
     daemon.add_argument("--max-cycles", type=int)
@@ -414,6 +415,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     api,
                     owner_uid=runner.worker_uid,
                     owner_gid=runner.worker_gid,
+                    mode=args.socket_mode,
                 ):
                     processed = coordinator.run_daemon(
                         poll_seconds=args.poll_seconds,
@@ -444,6 +446,16 @@ def _artifact_root(args: argparse.Namespace, database: Path) -> Path:
     if args.artifacts:
         return Path(args.artifacts).expanduser().resolve()
     return database.parent / "artifacts"
+
+
+def _socket_mode(value: str) -> int:
+    try:
+        mode = int(value, 8)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("socket mode must be 0600 or 0660") from exc
+    if mode not in {0o600, 0o660}:
+        raise argparse.ArgumentTypeError("socket mode must be 0600 or 0660")
+    return mode
 
 
 def _load_json(raw: str, field_name: str) -> Any:
